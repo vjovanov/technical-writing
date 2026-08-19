@@ -65,6 +65,12 @@ workspaces in, and a single `rhei run` drives the whole pipeline in dependency
 order, because `**Prior:**` resolves across rheis. Each template takes a `prior`
 input for exactly that. `rhei list` then shows the whole review as one tree.
 
+That project can be per paper (`review-42/`, zero path arguments) or one shared
+`~/panta` holding every review you have ever run. Discovery does not descend into
+subfolders, so the shared layout needs per-paper rhei names (`paper-ingest-42/`)
+and explicit upstream paths — [both layouts are written
+out](.agents/rhei/shared/README.md#where-the-project-lives).
+
 | Template | Answers |
 |---|---|
 | `paper-ingest` | What does this paper actually say? *(PDF or LaTeX — settled once, here)* |

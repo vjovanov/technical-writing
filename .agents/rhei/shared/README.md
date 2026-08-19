@@ -88,6 +88,72 @@ rhei validate                      # the whole project, all five rheis
 rhei run --parallel 6              # one command drives all of them
 ```
 
+#### Where the project lives
+
+Two layouts. Both work; they trade zero configuration against having everything
+in one place.
+
+**Per paper (used above).** A project per paper, `rhei init --here` inside it. Rhei
+names match template names, so every default path resolves and you pass none:
+
+```
+review-42/            <- rhei init --here
+├── paper-ingest/
+├── venue-intake/
+├── overall-review/
+└── ...
+```
+
+**One shared `~/panta` for every review.** `panta/` is the conventional name for a
+user-level project, so `~/panta` is a natural home for all your reviews:
+`rhei list` then shows every review you have ever run, and one `rhei run` advances
+all of them.
+
+Create it *in place*, not with `rhei init ~`:
+
+```bash
+mkdir -p ~/panta && cd ~/panta && rhei init --here --title "Reviews"
+```
+
+`rhei init ~` would put the project at `~/panta/` but also write `AGENTS.md` and
+`.gitignore` into `$HOME` itself. The form above keeps all three files inside
+`~/panta/` and leaves your home directory alone.
+
+The catch: **rhei discovery does not descend into subdirectories** — rheis live
+directly in the project root, so you cannot group a paper's workspaces in a
+`review-42/` folder inside `~/panta`. Every rhei is a direct child, and rhei ids
+must be unique across the whole project. So suffix them per paper, and pass the
+upstream paths explicitly, since the defaults assume the unsuffixed names:
+
+```bash
+cd ~/panta
+mkdir -p .agents/rhei             # settings go here, once, for every review
+
+P=42
+rhei instantiate paper-ingest ~/papers/submission-$P.pdf \
+  --set paper_id=$P --output paper-ingest-$P/
+cp paper-ingest-$P/.agents/rhei/settings.json .agents/rhei/settings.json
+
+rhei instantiate venue-intake https://2026.splashcon.org/track/OOPSLA \
+  --output venue-intake-$P/
+
+rhei instantiate overall-review --set paper_id=$P --keep-on-error \
+  --set paper=../paper-ingest-$P/paper/paper.json \
+  --set venue=../venue-intake-$P/venue/venue.json \
+  --set prior="Task paper-ingest-$P.ingest, Task venue-intake-$P.venue" \
+  --output overall-review-$P/
+
+rhei validate && rhei run --parallel 6
+```
+
+Reviews for different papers are independent, so a project-wide `rhei run`
+advances all of them concurrently.
+
+**Which to use.** Per paper if you review a few papers a year and want the short
+commands — the workspace is self-contained and you can archive or delete it whole.
+Shared `~/panta` if you want one dashboard over everything, and do not mind the
+suffixes and the explicit paths.
+
 **Why `--keep-on-error`.** `rhei instantiate` validates its output *in isolation*,
 before it is part of the project, so a cross-rhei `prior` fails that check with
 "no rhei named 'paper-ingest' in this project". The workspace is still written

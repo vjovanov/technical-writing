@@ -218,6 +218,43 @@ fi
 cd "$ROOT"
 
 echo
+echo "== a shared project holds several papers, with suffixed rhei ids =="
+SHARED_P="$WORK/shared-panta"
+mkdir -p "$SHARED_P" && cd "$SHARED_P"
+rhei init --here --title "Reviews" >/dev/null 2>&1
+mkdir -p .agents/rhei
+rhei instantiate "$TDIR/paper-ingest" ../s42.pdf --set paper_id=42 \
+  --output paper-ingest-42/ >/dev/null 2>&1
+cp paper-ingest-42/.agents/rhei/settings.json .agents/rhei/settings.json
+rhei instantiate "$TDIR/venue-intake" --set conference=OOPSLA \
+  --output venue-intake-42/ >/dev/null 2>&1
+rhei instantiate "$TDIR/overall-review" --set paper_id=42 --keep-on-error \
+  --set paper=../paper-ingest-42/paper/paper.json \
+  --set venue=../venue-intake-42/venue/venue.json \
+  --set prior='Task paper-ingest-42.ingest, Task venue-intake-42.venue' \
+  --output overall-review-42/ >/dev/null 2>&1
+# a second paper alongside the first
+rhei instantiate "$TDIR/paper-ingest" ../s51.pdf --set paper_id=51 \
+  --output paper-ingest-51/ >/dev/null 2>&1
+
+if rhei validate >/dev/null 2>&1; then
+  ok "two papers coexist in one project with suffixed ids and explicit paths"
+else
+  bad "shared project" "$(rhei validate 2>&1 | grep -vE 'is ignored|settings merge|Check both' | tail -5)"
+fi
+
+# Discovery must not descend: a workspace inside a subfolder is not a rhei.
+mkdir -p grouped
+rhei instantiate "$TDIR/venue-intake" --set conference=X \
+  --output grouped/venue-intake/ >/dev/null 2>&1
+if rhei list 2>/dev/null | grep -q "grouped"; then
+  bad "discovery descended into a subfolder (spec says it must not)"
+else
+  ok "discovery does not descend into subfolders, as documented"
+fi
+cd "$ROOT"
+
+echo
 echo "-------------------------------------------"
 printf '%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
