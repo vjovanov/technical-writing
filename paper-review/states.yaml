@@ -1,0 +1,751 @@
+{%- set pid = paper_id | default(paper | string | split('/') | last | split('.') | first, true) -%}
+# State machine diagram
+# ---------------------
+#
+# Legend: [initial] [final] [gate] = gating (only a human transitions out)
+#
+#   ingest [initial] --> completed [final]
+#
+#   ingest-venue --> completed [final]
+#
+#   search-related --> completed [final]
+#
+#   coordinate task path:
+#     intake-review [gate] --> plan-review --> completed [final]
+#          |                       |
+#          |                       +-- appends review-<slug> tasks (one per
+#          |                           core section), review-evaluation,
+#          |                           review-related-work, and the
+#          |                           aggregate task
+#          +-- human approves paper digest + related-work index
+#
+#   summarize    (all_targets: reviewers, concurrent) --> completed [final]
+#   review-topic (all_targets: reviewers, concurrent) --> completed [final]
+#
+#   aggregate task path:
+#     aggregate-points ({{aggregator_target}})
+#        --> verify-points ({{verifier_target}})
+#        --> points-review [gate]
+#        --> render-report ({{aggregator_target}}, visits: 3)
+#        --> final-signoff [gate, visits: 3]
+#              |--> completed [final]      (human approves submission)
+#              +--> render-report          (human requests revision)
+#
+#   any non-final state --> cancelled [final]
+#
+# Per-task paths:
+#   ingest:              ingest -> completed
+#   venue:               ingest-venue -> completed
+#   related-work:        search-related -> completed
+#   coordinate:          intake-review -> plan-review -> completed
+#   summarize:           summarize -> completed
+#   review-<slug>:       review-topic -> completed
+#   review-evaluation:   review-topic -> completed
+#   review-related-work: review-topic -> completed
+#   aggregate:           aggregate-points -> verify-points -> points-review
+#                        -> render-report -> final-signoff
+#                        [-> render-report -> final-signoff]* -> completed
+
+name: paper-review
+version: 1.0.0
+
+states:
+  ingest:
+    description: Read the submitted paper once, page-screenshot PDFs, and produce the canonical full-text and digest artifacts.
+    initial: true
+    target: {{utility_target}}
+    personality: |
+      You are the paper-intake agent. Your extraction is the canonical
+      reading of the paper for every downstream reviewer — be faithful,
+      complete, and neutral. Do not review or judge the paper here.
+    instructions: |
+      Ingest the paper for Task {task_id}: {task_title}.
+
+      The submission is at `{{paper}}` (venue: {{conference}}). All artifact
+      paths are relative to this workspace.
+
+      1. Detect the submission kind: a `.pdf` file is the PDF path; a `.tex`
+         file or a directory containing LaTeX sources is the LaTeX path.
+
+      2. PDF path only: render one PNG per page into `paper/pages/`:
+
+           mkdir -p paper/pages
+           pdftoppm -png -r 150 "{{paper}}" paper/pages/page
+
+         Fall back to `mutool draw` or ImageMagick if `pdftoppm` is
+         unavailable. Then read every page image in order.
+
+      3. LaTeX path only: locate the main file, inline every `\input` and
+         `\include`, and read the flattened source. Do not create
+         `paper/pages/`.
+
+      4. Write `{output.full-text.path}`: a faithful markdown extraction of
+         the whole paper — every section in order, all prose, and for every
+         figure and table a bracketed description of what it shows plus its
+         number and page. Reproduce key equations and numbers exactly. Do
+         not summarize, reorder, or editorialize.
+
+      5. Write `{output.digest.path}` in exactly this shape:
+
+           # Paper Digest: <title>
+
+           ## Metadata
+           - Title: <title>
+           - Authors: <as printed, or anonymized>
+           - Venue: {{conference}}
+           - Kind: pdf | latex
+           - Pages: <N>
+
+           ## Sections
+           - S1: <section title> — pages <N-M> — core | boilerplate
+           - S2: ...
+
+           ## Contributions
+           - C1: <claimed contribution, in the authors' terms>
+
+           ## Key claims
+           - K1: <specific falsifiable claim> — <section/page>
+
+         Mark abstract, references, and appendices `boilerplate`; mark every
+         substantive technical section `core` (one review task is spawned
+         per core section). Keep S/C/K ids stable — later states cite them.
+
+      Transition to `completed` when both artifacts are written.
+    outputs:
+      - name: full-text
+        path: paper/full-text.md
+        description: Canonical full-text extraction of the paper
+      - name: digest
+        path: paper/digest.md
+        description: Structured digest with section map, contributions, and key claims
+
+  ingest-venue:
+    description: Resolve the venue reference — website, file, or name — into venue notes, reviewer guidelines, and the review form.
+    target: {{utility_target}}
+    personality: |
+      You are the venue-intake agent. Downstream reviewers rely on what you
+      collect — prefer the venue's own words (call for papers, reviewer
+      guidelines, review form) over paraphrase.
+    instructions: |
+      Resolve the venue for Task {task_id}: {task_title}.
+
+      The venue reference is `{{conference}}`. Interpret it as:
+        - a URL: fetch the site and its relevant subpages (call for papers,
+          reviewer guidelines, review process, important dates);
+        - an existing local file or directory: read it;
+        - otherwise: the venue name — search the web for its official site.
+
+      1. Write `{output.venue.path}` in exactly this shape:
+
+           # Venue: <resolved venue name>
+           - Reference: {{conference}}
+           - Website: <url, or none>
+           - Scope: <topics the venue covers>
+           - Review process: <rounds, rebuttal, artifact evaluation, ...>
+           - Selection criteria: <what the venue says it rewards>
+
+      2. `inputs/guidelines.md`: if it contains the marker
+         `<!-- venue-intake: fill -->`, replace the marker with the venue's
+         reviewer guidelines — verbatim where published, otherwise the
+         selection criteria you collected. If the user supplied guidelines
+         (no marker present), leave the file untouched.
+
+      3. `inputs/review-form.md`: if it contains the marker
+         `<!-- venue-intake: fill -->`, replace the marker with the venue's
+         review form — verbatim when an offline form (e.g. HotCRP text with
+         `==+==` / `==*==` field lines) is published. If none is found,
+         write a default field list: paper summary; strengths; weaknesses;
+         detailed comments for the authors; questions for the authors;
+         overall merit (1-5); reviewer expertise (1-4). If the user
+         supplied a form (no marker present), leave the file untouched.
+
+      Transition to `completed` when all three files are final.
+    outputs:
+      - name: venue
+        path: inputs/venue.md
+        description: Resolved venue notes — name, scope, review process, selection criteria
+
+  search-related:
+    description: Search the literature for related work and download what is openly accessible.
+    target: {{utility_target}}
+    inputs:
+      - name: digest
+        path: paper/digest.md
+    personality: |
+      You are the related-work scout. Cast a wide net, then keep only work a
+      knowledgeable reviewer would expect this submission to engage with.
+    instructions: |
+      Collect related work for Task {task_id}: {task_title}.
+
+      Read `{input.digest.path}` and `paper/full-text.md` (especially the
+      related-work section and the bibliography). Search the web for:
+
+        - the closest prior work on the same problem
+        - the strongest competing approaches
+        - recent (last ~3 years) results the paper should cite
+        - seminal work that frames the problem
+        - earlier papers by the same authors that overlap this submission
+
+      Keep at most {{max_related}} papers, ranked by relevance. For each one
+      that is openly accessible (arXiv, OpenReview, author pages), download
+      the PDF to `related/pdfs/<slug>.pdf`. For paywalled papers keep the
+      link and abstract only.
+
+      Write `{output.related-index.path}` in exactly this shape:
+
+        # Related Work Index
+
+        - RW-01: <title> (<first author> et al., <venue> <year>)
+          - File: related/pdfs/<slug>.pdf | not-downloaded (<url>)
+          - Cited by submission: yes | no
+          - Relevance: <1-2 lines — why a reviewer must know this paper>
+          - Overlap: none | problem | method | results
+
+      Transition to `completed` when the index is written.
+    outputs:
+      - name: related-index
+        path: related/index.md
+        description: Ranked index of related work with per-paper relevance notes
+
+  intake-review:
+    description: Human gate — approve the paper digest and related-work set before the multi-model fan-out spends tokens.
+    gating: true
+    inputs:
+      - name: digest
+        path: paper/digest.md
+      - name: related-index
+        path: related/index.md
+    instructions: |
+      Human review point for Task {task_id}: {task_title}.
+
+      Before the reviewer models run, check the intake artifacts:
+
+        1. `paper/digest.md` — is the section map right? Re-mark sections
+           `core` / `boilerplate` to control which review tasks get spawned;
+           fix the title, contributions, or key claims if the extraction
+           misread them. Spot-check `paper/full-text.md` against the PDF.
+        2. `related/index.md` — add missing must-know papers, delete noise.
+        3. `inputs/venue.md`, `inputs/guidelines.md`, and
+           `inputs/review-form.md` — confirm the harvested venue info,
+           guidelines, and review form are right; paste the real offline
+           form into `inputs/review-form.md` if the agent could not find it.
+
+      Edit the files directly; downstream states treat them as ground truth.
+
+      Do not transition out of this state autonomously. A human must
+      transition to `plan-review` to start the review fan-out, or to
+      `cancelled` to stop the workflow.
+
+  plan-review:
+    description: Coordinator spawns one review task per core section, plus evaluation, related-work, and aggregate tasks.
+    target: {{utility_target}}
+    inputs:
+      - name: digest
+        path: paper/digest.md
+      - name: related-index
+        path: related/index.md
+    instructions: |
+      Plan the review for Task {task_id}: {task_title}.
+
+      Read `{input.digest.path}` and `{input.related-index.path}`, then
+      append task files under `tasks/` exactly as follows. Replace every
+      angle-bracket placeholder with concrete text; generated ids must be
+      stable, unique, and kebab-case. Do not leave placeholders behind.
+
+      1. For each `## Sections` entry marked `core`, append one file
+         `tasks/<NN>-review-<slug>.md` (number them from 10):
+
+           ### Task review-<slug>: Review <section title>
+           **State:** review-topic
+           **Prior:** Task {task_id}
+
+           Review section <S-id>: <section title> (pages <N-M>).
+           Scope: <what this section claims or does>.
+           Specific questions: <2-5 concrete questions a reviewer must
+           answer about this section — soundness of the technique, unstated
+           assumptions, clarity of definitions, and the like>.
+           Related work to consult: <relevant RW-ids, or none>.
+
+      2. Append `tasks/80-review-evaluation.md`:
+
+           ### Task review-evaluation: Review the evaluation
+           **State:** review-topic
+           **Prior:** Task {task_id}
+
+           Review the paper's evaluation as a whole: benchmark and baseline
+           choice, methodology, statistical rigor, whether the experiments
+           support each key claim (<K-ids from the digest>), reproducibility
+           (artifact, data, configurations), and threats to validity.
+
+      3. Append `tasks/81-review-related-work.md`:
+
+           ### Task review-related-work: Review novelty and related work
+           **State:** review-topic
+           **Prior:** Task {task_id}
+
+           Compare the submission against `related/index.md` and the PDFs
+           under `related/pdfs/`. Assess the novelty of each claimed
+           contribution (<C-ids>), missing citations, misrepresented prior
+           work, and overlap with the authors' own earlier papers.
+
+      4. Append `tasks/90-aggregate.md`; its id must be exactly `aggregate`:
+
+           ### Task aggregate: Aggregate, verify, and render the review
+           **State:** aggregate-points
+           **Prior:** Task summarize, Task review-<slug-1>, ..., Task review-evaluation, Task review-related-work
+
+           Merge all reviewer output into addressable points, verify each
+           point against the paper, and render the final review for
+           {{conference}}.
+
+         The `**Prior:**` list must name every task appended in steps 1-3
+         plus `Task summarize`; no ellipses may remain.
+
+      5. Write `{output.review-plan.path}` listing every task you appended
+         with the section or topic it covers and its one-line scope.
+
+      Transition to `completed` when the manifest is written and all
+      follow-up tasks are appended.
+    outputs:
+      - name: review-plan
+        path: runtime/manifests/{task_id}-review-plan.md
+        description: Manifest of spawned review topics and their scopes
+
+  summarize:
+    description: Each reviewer model independently writes the overall paper summary focused on contribution to the community.
+    concurrent: true
+    all_targets:
+{%- for r in reviewers %}
+      - {{ r.selector }}
+{%- endfor %}
+    inputs:
+      - name: full-text
+        path: paper/full-text.md
+      - name: digest
+        path: paper/digest.md
+      - name: guidelines
+        path: inputs/guidelines.md
+      - name: venue
+        path: inputs/venue.md
+    personality: |
+      You are {target}, an experienced program-committee member for the
+      target venue. Judge what the paper contributes and why the community
+      should (or should not) care. Independent judgment only — do not
+      imitate the other reviewers.
+    instructions: |
+      Summarize the paper for Task {task_id}: {task_title}.
+
+      Read `{input.venue.path}` for the venue's scope and selection
+      criteria. Read `{input.full-text.path}` and `{input.digest.path}`, and
+      follow the venue guidelines at `{input.guidelines.path}`. For PDF submissions
+      the page images under `paper/pages/` are available when the extraction
+      is ambiguous; skip them if your toolset cannot read images.
+
+      Write `{output.summary.path}` in exactly this shape:
+
+        # Overall Summary — {target}
+
+        ## Problem and approach
+        <what problem, why it is hard, what the paper does>
+
+        ## Claimed contributions
+        <each C-id restated in your own words, with your read on it>
+
+        ## Significance to the community
+        <who in the venue's community benefits, what changes if this is
+        accepted, how it moves the field>
+
+        ## Initial stance
+        <one line: leaning accept / weak accept / weak reject / reject,
+        with the single strongest reason>
+
+      Transition to `completed` when the summary is written.
+    outputs:
+      - name: summary
+        path: reviews/summary/{target.slug}.md
+        description: One reviewer model's overall summary and significance assessment
+
+  review-topic:
+    description: Independent per-model review of one topic — a core section, the evaluation, or related work.
+    concurrent: true
+    all_targets:
+{%- for r in reviewers %}
+      - {{ r.selector }}
+{%- endfor %}
+    inputs:
+      - name: full-text
+        path: paper/full-text.md
+      - name: digest
+        path: paper/digest.md
+      - name: guidelines
+        path: inputs/guidelines.md
+      - name: venue
+        path: inputs/venue.md
+    personality: |
+      You are {target}, a rigorous, skeptical reviewer for the target
+      venue. Judge only the topic assigned in the task body. Every finding
+      needs evidence from the paper — no generic advice, and no style nits
+      unless they obscure meaning.
+    instructions: |
+      Review Task {task_id}: {task_title}.
+
+      The task body defines your topic scope and specific questions. Read
+      `{input.full-text.path}` in full and the assigned pages closely;
+      consult `related/index.md` and `related/pdfs/` when the scope says so;
+      follow the venue guidelines at `{input.guidelines.path}` and the
+      venue's selection criteria in `{input.venue.path}`. For PDF
+      submissions the page images under `paper/pages/` resolve extraction
+      ambiguities; skip them if your toolset cannot read images.
+
+      Write `{output.findings.path}` in exactly this shape:
+
+        # Topic Review: {task_title} — {target}
+
+        ## Answers to the scoped questions
+        <answer each specific question from the task body>
+
+        ## Findings
+        - F-{task_id}-01: <one-line finding>
+          - Kind: flaw | question | missing-related | presentation
+          - Severity: critical | major | minor
+          - Where: <section / page / figure>
+          - Evidence: <quote or precise reference from the paper>
+          - Suggestion: <what the authors could do about it>
+
+      Number findings sequentially. If the topic is sound, write `- none`
+      under `## Findings` rather than inventing issues.
+
+      Transition to `completed` when the findings file is written.
+    outputs:
+      - name: findings
+        path: reviews/findings/{task_id}-{target.slug}.md
+        description: One reviewer model's findings for one review topic
+
+  aggregate-points:
+    description: Best model merges all reviewer output into deduplicated, addressable review points plus a consolidated summary.
+    target: {{aggregator_target}}
+    inputs:
+      - name: digest
+        path: paper/digest.md
+    personality: |
+      You are the review aggregator. Merge aggressively, preserve evidence
+      and reviewer disagreement, and never invent points beyond what the
+      reviewers reported.
+    instructions: |
+      Aggregate the reviews for Task {task_id}: {task_title}.
+
+      Read every file under `reviews/summary/` and `reviews/findings/`
+      (produced by the tasks in this task's `**Prior:**`), plus
+      `{input.digest.path}`.
+
+      1. Write `{output.paper-summary.path}`: one consolidated summary
+         (problem, approach, contributions, significance) that reconciles
+         the per-model summaries and records any disagreement about
+         significance, including each model's initial stance.
+
+      2. Deduplicate all findings into addressable points and write
+         `{output.points.path}` in exactly this shape:
+
+           # Review Points — <paper title>
+
+           - P-001 (critical | major | minor | question) — <one-line point>
+             - Statement: <2-4 sentences, written so the authors can act on
+               or rebut it>
+             - Sources: <F-ids that back it>
+             - Evidence: <best concrete evidence from the paper>
+             - Agreement: all reviewers | <target slugs that reported it>
+
+         Order points by severity, then by section order. Merge findings
+         that describe the same underlying issue; keep genuinely distinct
+         points separate even when related. Preserve minority reports — a
+         point raised by one reviewer is still a point.
+
+      Transition to `verify-points` when both artifacts are written.
+    outputs:
+      - name: points
+        path: points/points.md
+        description: Deduplicated, addressable review points
+      - name: paper-summary
+        path: points/summary.md
+        description: Consolidated paper summary reconciling the per-model summaries
+
+  verify-points:
+    description: Configurable verifier independently checks every aggregated point against the paper.
+    target: {{verifier_target}}
+    inputs:
+      - name: points
+        path: points/points.md
+      - name: full-text
+        path: paper/full-text.md
+    personality: |
+      You are a skeptical verifier. Your job is to protect the authors from
+      wrong review points: confirm a point only when the paper's own text
+      supports it. Check the paper, not the reviewers' authority.
+    instructions: |
+      Verify review points for Task {task_id}: {task_title}.
+
+      Read `{input.points.path}`. For every point, go back to the primary
+      evidence: `{input.full-text.path}`, the page images under
+      `paper/pages/` (if present), and `related/pdfs/` for related-work
+      points. Classify each point:
+
+        - confirmed — the evidence holds as stated
+        - weakened  — real but overstated, miscategorized, or too broad;
+          provide the corrected statement
+        - rejected  — factually wrong, already addressed in the paper, or
+          not supported by the cited evidence
+
+      Write `{output.verification.path}` in exactly this shape:
+
+        # Point Verification
+
+        - P-001: confirmed | weakened | rejected
+          - Reason: <evidence-based, citing section/page>
+          - Revised statement: <required for weakened; omit otherwise>
+
+      Every P-id from the points file must appear exactly once.
+
+      Transition to `points-review` when the verification file is written.
+    outputs:
+      - name: verification
+        path: points/verification.md
+        description: Per-point verification verdicts with evidence
+
+  points-review:
+    description: Human gate — curate the verified point list before the report is rendered.
+    gating: true
+    inputs:
+      - name: points
+        path: points/points.md
+      - name: verification
+        path: points/verification.md
+    instructions: |
+      Human review point for Task {task_id}: {task_title}.
+
+      Read `points/points.md` alongside `points/verification.md`. This is
+      where human judgment shapes the review:
+
+        - strike points you disagree with (delete them or mark them
+          `rejected` in the verification file — your edits win over the
+          verifier),
+        - sharpen statements, adjust severities, or add points the models
+          missed (add matching `confirmed` entries to the verification
+          file),
+        - spot-check verdicts you find surprising against the paper.
+
+      The two files as you leave them are the ground truth for the report.
+
+      Do not transition out of this state autonomously. A human must
+      transition to `render-report` to render the review, or to `cancelled`
+      to stop the workflow.
+
+  render-report:
+    description: Best model fills every review-form field from the curated points; scores are suggested, not final.
+    target: {{aggregator_target}}
+    visits: 3
+    inputs:
+      - name: points
+        path: points/points.md
+      - name: verification
+        path: points/verification.md
+      - name: paper-summary
+        path: points/summary.md
+      - name: review-form
+        path: inputs/review-form.md
+      - name: guidelines
+        path: inputs/guidelines.md
+      - name: venue
+        path: inputs/venue.md
+    personality: |
+      You are the review writer for the target venue. Professional,
+      specific, and constructive — the authors should know exactly what to
+      fix, and the program committee should trust every claim you make.
+    instructions: |
+      Render the review for Task {task_id}: {task_title} (visit
+      {visit_count} of {visits}).
+
+      The effective point set is every point in `{input.points.path}` whose
+      verdict in `{input.verification.path}` is `confirmed` or `weakened`
+      (use the revised statement for weakened points). Both files may have
+      been edited by a human after verification — the files as they exist
+      now are ground truth. Drop `rejected` points entirely.
+
+      If `review/human-feedback.md` exists, this is a revision pass: apply
+      that feedback first.
+
+      Fill every field of `{input.review-form.path}`, in order, following
+      `{input.guidelines.path}`:
+
+        - Prose fields: write them from `{input.paper-summary.path}` and
+          the effective points. Every criticism must trace to an effective
+          point; keep P-ids as inline markers like [P-003].
+        - Numeric, score, and enum fields (overall merit, confidence, and
+          similar): fill each with a justified suggestion and mark it
+          [SUGGESTED] — a human confirms or overrides it at sign-off.
+
+      Write all three:
+
+        - `{output.final-review.path}` — the filled form in markdown, one
+          heading per form field, with the [P-xxx] and [SUGGESTED] markers.
+        - `{output.submission.path}` — the submission-ready rendering.
+          When the form is an offline upload form (e.g. HotCRP text with
+          `==+==` / `==*==` lines), reproduce the entire form verbatim and
+          only fill the response areas: prose below each field, the bare
+          choice number where one is requested, and never alter, reorder,
+          or drop lines starting with `==+==`, `==*==`, or `==-==`.
+          Otherwise use whatever syntax the form prescribes, or plain text
+          if none. Strip the [P-xxx] markers; write suggested scores as
+          plain values.
+        - `{output.submission-short.path}` — a short review that reads like
+          a busy human expert wrote it, NOT a comprehensive one. Keep the
+          exact same form scaffolding and the same numeric/enum/score answers
+          as `{output.submission.path}` (never alter, reorder, or drop
+          `==+==` / `==*==` / `==-==` lines, and keep every score identical);
+          only the prose changes. This is the deliverable the reviewer
+          actually uploads, so cut hard:
+            * Total prose across all fields should land around 700-1300
+              words — a large multiple shorter than the full submission, not
+              a light trim. If a section reads as exhaustive, it is too long.
+            * Lead with the two or three points that actually decide the
+              score, stated with their one load-bearing specific each (the
+              counterexample, the number, the figure/section ref, the named
+              prior work). Everything else goes in ONE short catch-all
+              sentence or a final catch-all change item — do not give every
+              minor point its own line. Never introduce a claim, number, or
+              citation that is not in the effective point set, and keep the
+              merit score traceable to the points you keep.
+            * Rough shape: 1 short summary paragraph; 2-3 reasons-to-accept
+              bullets; a couple of major-concern bullets plus one short
+              "smaller but real" sentence; 3-4 short feedback paragraphs;
+              2-3 single-part rebuttal questions (author responses are
+              length-capped); and, only if the score requires an itemized
+              change list, 6-8 requested changes with the long tail folded
+              into the last item. Prefer fewer, sharper items over complete
+              coverage.
+            * Voice: first person and opinionated ("This is a major revision,
+              not a reject, because…"). Short sentences, varied length, plain
+              words, contractions. Drop inline set/type notation and
+              symbol-dense clauses — describe the point in words and cite the
+              section. No wall-to-wall bold (a lead-in at most), no em-dash
+              pile-ups, no three-clause semicolon sentences, no parallel
+              bullets that all share the same shape, no evaluative filler
+              ("genuinely interesting", "well-executed", "squarely in
+              scope"), no throat-clearing or summary-of-summary sentences.
+            * Before finishing, reread it and cut anything that reads as
+              machine-generated: identical bullet shapes, hedged completeness,
+              a point kept only for coverage.
+          If the form has a PC-only / confidential-comments field, end that
+          field with a one-line note that each point was derived and checked
+          with AI assistance and then proof-read and verified by the human
+          reviewer; put this note nowhere else.
+
+      Transition to `final-signoff` when all three files are written.
+    outputs:
+      - name: final-review
+        path: review/final-review-{{ pid }}.md
+        description: The filled review form with point traceability and suggested scores
+      - name: submission
+        path: review/submission-{{ pid }}.txt
+        description: Submission-ready rendering of the review
+      - name: submission-short
+        path: review/submission-{{ pid }}-short.txt
+        description: Shortened, human-facing rendering of the submission (same scaffolding and scores)
+
+  final-signoff:
+    description: Human gate — confirm scores and approve the outward-facing review, or send it back for revision.
+    gating: true
+    visits: 3
+    inputs:
+      - name: final-review
+        path: review/final-review-{{ pid }}.md
+      - name: submission
+        path: review/submission-{{ pid }}.txt
+      - name: submission-short
+        path: review/submission-{{ pid }}-short.txt
+    instructions: |
+      Final sign-off for Task {task_id}: {task_title}.
+
+      Read `{input.final-review.path}`. Every field marked [SUGGESTED] is a
+      model-proposed score — confirm or change it, and mirror any change in
+      BOTH `{input.submission.path}` and `{input.submission-short.path}`.
+      Pick which one you upload: `{input.submission.path}` is the full
+      rendering, `{input.submission-short.path}` is the concise human-facing
+      version with the same scores. Whichever you change, keep the scores
+      identical between the two.
+
+      Do not transition out of this state autonomously. A human must either:
+
+        - transition to `completed` to approve the review as it stands in
+          `{input.submission.path}`, or
+        - write revision instructions to `review/human-feedback.md` and
+          transition back to `render-report`, or
+        - transition to `cancelled` to abandon the review.
+
+  completed:
+    description: Task is done.
+    instructions: |
+      No further action is required for Task {task_id}.
+    final: true
+
+  cancelled:
+    description: Task was cancelled before completion.
+    instructions: |
+      Stop all work on Task {task_id}. Leave existing artifacts in place.
+    final: true
+
+transitions:
+  - from: ingest
+    to: completed
+    description: Full text and digest are written.
+
+  - from: ingest-venue
+    to: completed
+    description: Venue notes are written; guidelines and review form are resolved.
+
+  - from: search-related
+    to: completed
+    description: Related-work index is written and accessible PDFs are downloaded.
+
+  - from: intake-review
+    to: plan-review
+    description: Human approved the digest and related-work set; start the review fan-out.
+
+  - from: plan-review
+    to: completed
+    description: Coordinator wrote the review plan and appended all review and aggregate tasks.
+
+  - from: summarize
+    to: completed
+    description: Every reviewer model wrote its overall summary.
+
+  - from: review-topic
+    to: completed
+    description: Every reviewer model wrote findings for this topic.
+
+  - from: aggregate-points
+    to: verify-points
+    description: Points and consolidated summary are written; verify each point.
+
+  - from: verify-points
+    to: points-review
+    description: Every point has a verdict; wait for human curation.
+
+  - from: points-review
+    to: render-report
+    description: Human curated the point list; render the review.
+
+  - from: render-report
+    to: final-signoff
+    description: Review and submission files are written; wait for human sign-off.
+
+  - from: final-signoff
+    to: completed
+    description: Human approved the submission-ready review.
+
+  - from: final-signoff
+    to: render-report
+    description: Human requested a revision via review/human-feedback.md.
+
+  - from: "*"
+    to: cancelled
+    description: Cancel the task from any non-final state.
