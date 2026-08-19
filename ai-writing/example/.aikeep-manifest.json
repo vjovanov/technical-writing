@@ -1,6 +1,6 @@
 {
-  "version": 2,
-  "description": "AI-protected content manifest for \\aikeep{} and \\aianchor{} blocks",
+  "version": 3,
+  "description": "AI-protected content manifest for \\aikeep{} and \\aianchor{} blocks. Hashes are computed over whitespace-normalized content.",
   "total_blocks": 6,
   "aikeep_count": 3,
   "aianchor_count": 3,
@@ -30,21 +30,21 @@
       "file": "sections/evaluation.tex",
       "line": 34,
       "content": "Explicit annotations let AI agents edit a paper without eroding its\ncarefully chosen wording.",
-      "hash": "a3f26f1e78a416bd",
+      "hash": "19b35743f40f2b9a",
       "block_type": "aianchor"
     },
     {
       "file": "sections/introduction.tex",
       "line": 6,
       "content": "Collaborating with AI agents on a paper requires a way to mark which\ntext is negotiable and which is not.",
-      "hash": "6bc3f2be78438c89",
+      "hash": "452d8de8efdc30f2",
       "block_type": "aianchor"
     },
     {
       "file": "sections/introduction.tex",
       "line": 12,
       "content": "A \\emph{protected block} is a span of text that an AI agent must never\nmodify, under any instruction.",
-      "hash": "e25c0b34a7b23d6b",
+      "hash": "32f5d3e15955babb",
       "block_type": "aikeep"
     }
   ]

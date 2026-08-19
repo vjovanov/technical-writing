@@ -4,8 +4,7 @@ A small library for **AI–human collaboration on LaTeX papers**.
 
 It gives you a way to mark, inside the `.tex` source, which text an AI agent may
 rewrite and which it must leave alone — and a verification step that fails the
-build when protected text is touched. Extracted from the OOPSLA 2026 submission
-in `phd-research/ai-writing`.
+build when protected text is touched.
 
 ## Why
 
@@ -27,6 +26,11 @@ are advisory; these annotations are checkable.
 every protected block into `.aikeep-manifest.json`. `make verify` fails with a
 non-zero exit code if any hash changed, if a block disappeared, or if two anchors
 swapped order.
+
+Hashes are computed over *whitespace-normalized* content, so re-wrapping a
+paragraph does not fail the build — TeX collapses runs of whitespace anyway, and
+a check that cries wolf on every reflow is a check people learn to ignore. Moving
+a block to a different line is likewise fine; only its text is compared.
 
 `\airule` and `\aiguideline` are **section-scoped**: they apply from where they
 appear until the next `\section` of equal or higher level. That scoping is a
@@ -50,7 +54,7 @@ example/               Minimal compilable paper exercising every annotation
 `main.tex`, or point `TEXINPUTS` at it from your Makefile:
 
 ```make
-AIWRITING = ../technical-writing
+AIWRITING = ../technical-writing/ai-writing
 export TEXINPUTS := .:$(AIWRITING)/latex:$(TEXINPUTS)
 ```
 
@@ -80,7 +84,7 @@ git add .aikeep-manifest.json
 ```
 
 **5. Point your agent at the rules.** In your paper's `AGENTS.md`, link to
-[`AGENTS.md`](AGENTS.md) here for the annotation semantics and keep only
+[`AGENTS.md`](AGENTS.md) in this directory for the annotation semantics and keep only
 paper-specific content (thesis, structure, results to preserve) locally.
 [`templates/AGENTS.md`](templates/AGENTS.md) is a skeleton for exactly that.
 
@@ -95,6 +99,10 @@ Run from the paper directory:
 | `make verify-list` | List every protected block with its hash |
 | `make verify-diff` | Show what changed since the manifest was written |
 
+`verify` reports each change as `MODIFIED` (text edited), `REMOVED` (block or its
+wrapper deleted), `NEW` (block added — a warning, not a failure) or
+`ORDER VIOLATION` (anchors reordered). `MODIFIED` and `REMOVED` fail the build.
+
 The script also runs standalone:
 
 ```bash
@@ -108,10 +116,16 @@ anywhere:
 
 ```bash
 cd example
-make          # print-ready build
-make draft    # review comments visible
+make          # print-ready build      -> main.pdf
+make draft    # review comments shown  -> main-draft.pdf
 make verify   # 6 protected blocks, passes
 ```
+
+The draft build writes a **separate** `main-draft.pdf` on purpose. If both builds
+shared one filename, latexmk — which decides what to rebuild from source
+timestamps, and cannot see that a command-line option changed — would report
+"nothing to do" and leave a PDF full of review comments sitting where you expect
+the submission version.
 
 ## Package options
 
@@ -124,5 +138,12 @@ make verify   # 6 protected blocks, passes
 ## Requirements
 
 - LaTeX with `xparse` and `xcolor` (both in TeX Live / MiKTeX base)
+- `latexmk` for the Makefile targets. It needs the Perl modules `Time::HiRes`,
+  `Unicode::Normalize` and `sigtrap`, which some minimal distro Perl builds omit
+  (`dnf install perl-Time-HiRes perl-Unicode-Normalize perl-sigtrap`).
 - Python 3.9+ for the verification script (no third-party packages)
 - `pdftoppm` from `poppler-utils`, only for `make images`
+
+Verified against TeX Live 2026 with `pdflatex`; the `example/` paper uses
+`article` so it needs nothing beyond the above. Papers using `acmart` will
+additionally need that class and the Libertinus fonts.

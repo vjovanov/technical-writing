@@ -24,6 +24,19 @@ from pathlib import Path
 from typing import Iterator
 
 
+def normalize_content(content: str) -> str:
+    """
+    Normalize protected content for comparison.
+
+    Runs of whitespace collapse to a single space and the ends are stripped,
+    because TeX already treats them that way: re-wrapping a paragraph changes
+    the source bytes but not one glyph of the output. Hashing the raw bytes
+    would fail the build every time an editor reflowed a line, which trains
+    people to ignore the check.
+    """
+    return ' '.join(content.split())
+
+
 @dataclass
 class ProtectedBlock:
     """Represents a single protected block (\aikeep{} or \aianchor{})."""
@@ -35,8 +48,9 @@ class ProtectedBlock:
 
     @classmethod
     def from_content(cls, file: str, line: int, content: str, block_type: str = 'aikeep') -> "ProtectedBlock":
-        """Create a ProtectedBlock with computed hash."""
-        content_hash = hashlib.sha256(content.encode('utf-8')).hexdigest()[:16]
+        """Create a ProtectedBlock with a hash over the normalized content."""
+        normalized = normalize_content(content)
+        content_hash = hashlib.sha256(normalized.encode('utf-8')).hexdigest()[:16]
         return cls(file=file, line=line, content=content, hash=content_hash, block_type=block_type)
 
 
@@ -190,8 +204,11 @@ def generate_manifest(root_dir: Path, manifest_path: Path) -> list[ProtectedBloc
     aianchor_count = sum(1 for b in blocks if b.block_type == 'aianchor')
 
     manifest = {
-        "version": 2,
-        "description": "AI-protected content manifest for \\aikeep{} and \\aianchor{} blocks",
+        "version": 3,
+        "description": (
+            "AI-protected content manifest for \\aikeep{} and \\aianchor{} blocks. "
+            "Hashes are computed over whitespace-normalized content."
+        ),
         "total_blocks": len(blocks),
         "aikeep_count": aikeep_count,
         "aianchor_count": aianchor_count,
@@ -223,13 +240,75 @@ def load_manifest(manifest_path: Path) -> list[ProtectedBlock]:
     with open(manifest_path, 'r', encoding='utf-8') as f:
         data = json.load(f)
 
-    # Handle both v1 (without block_type) and v2 (with block_type) manifests
+    # Handle v1 (no block_type), v2 (block_type, raw-byte hashes) and v3
+    # manifests. The stored hash is deliberately ignored and recomputed from
+    # the stored content, so a manifest written by an older version keeps
+    # working under the current normalization rules without regeneration.
     blocks = []
     for b in data["blocks"]:
-        if "block_type" not in b:
-            b["block_type"] = "aikeep"  # Default for legacy manifests
-        blocks.append(ProtectedBlock(**b))
+        blocks.append(ProtectedBlock.from_content(
+            file=b["file"],
+            line=b["line"],
+            content=b["content"],
+            block_type=b.get("block_type", "aikeep"),
+        ))
     return blocks
+
+
+def diff_blocks(
+    saved_blocks: list[ProtectedBlock],
+    current_blocks: list[ProtectedBlock],
+) -> dict[str, list]:
+    """
+    Compute a block-level diff between manifest and current state.
+
+    Blocks are identified by their content hash within a (file, block_type)
+    group, never by line number -- inserting an unrelated paragraph shifts every
+    line below it without changing any protected content.
+
+    Returns a dict with keys:
+        'moved'    -> list of (saved, current) whose content matches but line differs
+        'modified' -> list of (saved, current) pairs
+        'removed'  -> list of saved blocks with no counterpart
+        'added'    -> list of current blocks with no counterpart
+    """
+    def group(blocks: list[ProtectedBlock]) -> dict[tuple[str, str], list[ProtectedBlock]]:
+        out: dict[tuple[str, str], list[ProtectedBlock]] = {}
+        for b in blocks:
+            out.setdefault((b.file, b.block_type), []).append(b)
+        return out
+
+    saved_groups = group(saved_blocks)
+    current_groups = group(current_blocks)
+
+    result: dict[str, list] = {'moved': [], 'modified': [], 'removed': [], 'added': []}
+
+    for key in sorted(set(saved_groups) | set(current_groups)):
+        saved_group = saved_groups.get(key, [])
+        current_group = current_groups.get(key, [])
+
+        # Match blocks whose content is byte-identical, in document order.
+        # A block that still exists somewhere in the file is never "removed",
+        # even if it moved -- reordering is reported by verify_anchor_order.
+        remaining_current = list(current_group)
+        saved_only: list[ProtectedBlock] = []
+        for saved in saved_group:
+            match = next((c for c in remaining_current if c.hash == saved.hash), None)
+            if match is None:
+                saved_only.append(saved)
+            else:
+                remaining_current.remove(match)
+                if match.line != saved.line:
+                    result['moved'].append((saved, match))
+
+        # Whatever is left on both sides is an edit; pair in document order so
+        # the reported "Original -> Current" is the block that actually changed.
+        for saved, current in zip(saved_only, remaining_current):
+            result['modified'].append((saved, current))
+        result['removed'].extend(saved_only[len(remaining_current):])
+        result['added'].extend(remaining_current[len(saved_only):])
+
+    return result
 
 
 def verify_manifest(root_dir: Path, manifest_path: Path) -> bool:
@@ -251,42 +330,30 @@ def verify_manifest(root_dir: Path, manifest_path: Path) -> bool:
     saved_blocks = load_manifest(manifest_path)
     current_blocks = scan_tex_files(root_dir)
 
-    # Create lookup dictionaries (include block_type in key for uniqueness)
-    saved_lookup = {(b.file, b.hash, b.block_type): b for b in saved_blocks}
-    current_lookup = {(b.file, b.hash, b.block_type): b for b in current_blocks}
+    delta = diff_blocks(saved_blocks, current_blocks)
 
     errors = []
     warnings = []
 
-    # Check for modified or removed blocks
-    for key, saved in saved_lookup.items():
-        if key not in current_lookup:
-            # Block was modified or removed - check by file and approximate line
-            found_in_file = [b for b in current_blocks if b.file == saved.file and b.block_type == saved.block_type]
-            type_label = f"\\{saved.block_type}"
-            if not found_in_file:
-                errors.append(f"REMOVED [{type_label}]: {saved.file}:{saved.line}")
-                errors.append(f"  Content: {saved.content[:60]}{'...' if len(saved.content) > 60 else ''}")
-            else:
-                # Check if content at similar location changed
-                errors.append(f"MODIFIED [{type_label}]: {saved.file}:{saved.line}")
-                errors.append(f"  Original: {saved.content[:60]}{'...' if len(saved.content) > 60 else ''}")
-                # Try to find the modified version
-                for current in found_in_file:
-                    if abs(current.line - saved.line) <= 5:
-                        errors.append(f"  Current:  {current.content[:60]}{'...' if len(current.content) > 60 else ''}")
-                        break
+    def excerpt(block: ProtectedBlock, limit: int = 60) -> str:
+        text = block.content.replace('\n', ' ')
+        return f"{text[:limit]}{'...' if len(text) > limit else ''}"
 
-    # Check for new blocks (not an error, but informational)
-    for key, current in current_lookup.items():
-        if key not in saved_lookup:
-            type_label = f"\\{current.block_type}"
-            warnings.append(f"NEW [{type_label}]: {current.file}:{current.line}")
-            warnings.append(f"  Content: {current.content[:60]}{'...' if len(current.content) > 60 else ''}")
+    for saved, current in delta['modified']:
+        errors.append(f"MODIFIED [\\{saved.block_type}]: {saved.file}:{saved.line}")
+        errors.append(f"  Original: {excerpt(saved)}")
+        errors.append(f"  Current:  {excerpt(current)}")
+
+    for saved in delta['removed']:
+        errors.append(f"REMOVED [\\{saved.block_type}]: {saved.file}:{saved.line}")
+        errors.append(f"  Content: {excerpt(saved)}")
+
+    for current in delta['added']:
+        warnings.append(f"NEW [\\{current.block_type}]: {current.file}:{current.line}")
+        warnings.append(f"  Content: {excerpt(current)}")
 
     # Check ordering of \aianchor blocks (they must maintain their relative order)
-    order_errors = verify_anchor_order(saved_blocks, current_blocks)
-    errors.extend(order_errors)
+    errors.extend(verify_anchor_order(saved_blocks, current_blocks))
 
     # Print results
     if errors:
@@ -306,17 +373,15 @@ def verify_manifest(root_dir: Path, manifest_path: Path) -> bool:
         print()
 
     if not errors and not warnings:
-        print(f"✓ Verification passed: {len(saved_blocks)} protected block(s) unchanged")
+        print(f"\u2713 Verification passed: {len(saved_blocks)} protected block(s) unchanged")
         return True
     elif not errors:
-        print(f"✓ Verification passed with {len(warnings)//2} new block(s)")
+        print(f"\u2713 Verification passed with {len(delta['added'])} new block(s)")
         print("  Run 'verify_aikeep.py generate' to update the manifest")
         return True
     else:
-        print(f"✗ Verification failed")
+        print(f"\u2717 Verification failed")
         return False
-
-
 def verify_anchor_order(saved_blocks: list[ProtectedBlock], current_blocks: list[ProtectedBlock]) -> list[str]:
     """
     Verify that \aianchor blocks maintain their relative order.
@@ -431,44 +496,38 @@ def show_diff(root_dir: Path, manifest_path: Path) -> None:
     saved_blocks = load_manifest(manifest_path)
     current_blocks = scan_tex_files(root_dir)
 
-    saved_by_file_line = {(b.file, b.line): b for b in saved_blocks}
-    current_by_file_line = {(b.file, b.line): b for b in current_blocks}
+    delta = diff_blocks(saved_blocks, current_blocks)
 
-    changes = []
-
-    # Find modifications
-    for key in saved_by_file_line:
-        saved = saved_by_file_line[key]
-        if key in current_by_file_line:
-            current = current_by_file_line[key]
-            if saved.hash != current.hash:
-                changes.append(('modified', saved, current))
-        else:
-            changes.append(('removed', saved, None))
-
-    # Find additions
-    for key in current_by_file_line:
-        if key not in saved_by_file_line:
-            changes.append(('added', None, current_by_file_line[key]))
-
-    if not changes:
+    total = sum(len(delta[k]) for k in ('modified', 'removed', 'added'))
+    if total == 0 and not delta['moved']:
         print("No changes detected.")
         return
 
-    print(f"Found {len(changes)} change(s):\n")
+    if total == 0:
+        print(f"No content changes ({len(delta['moved'])} block(s) shifted position):\n")
+    else:
+        print(f"Found {total} change(s):\n")
 
-    for change_type, old, new in changes:
-        if change_type == 'modified':
-            print(f"MODIFIED: {old.file}:{old.line}")
-            print(f"  - {old.content}")
-            print(f"  + {new.content}")
-        elif change_type == 'removed':
-            print(f"REMOVED: {old.file}:{old.line}")
-            print(f"  - {old.content}")
-        elif change_type == 'added':
-            print(f"ADDED: {new.file}:{new.line}")
-            print(f"  + {new.content}")
+    for saved, current in delta['modified']:
+        print(f"MODIFIED [\\{saved.block_type}]: {saved.file}:{saved.line}")
+        print(f"  - {saved.content}")
+        print(f"  + {current.content}")
         print()
+
+    for saved in delta['removed']:
+        print(f"REMOVED [\\{saved.block_type}]: {saved.file}:{saved.line}")
+        print(f"  - {saved.content}")
+        print()
+
+    for current in delta['added']:
+        print(f"ADDED [\\{current.block_type}]: {current.file}:{current.line}")
+        print(f"  + {current.content}")
+        print()
+
+    for saved, current in delta['moved']:
+        print(f"MOVED [\\{saved.block_type}]: {saved.file}:{saved.line} -> {current.line} (content unchanged)")
+        print()
+
 
 
 def main():

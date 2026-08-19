@@ -18,7 +18,7 @@ They are provided by [`latex/aiwriting.sty`](latex/aiwriting.sty).
 | Annotation | Purpose | Example |
 |------------|---------|---------|
 | `\aikeep{text}` | Protect text from AI modifications. The AI must NEVER modify this content. | `\aikeep{This definition is final.}` |
-| `\aianchor{text}` | Anchor for the first sentence of a paragraph. The AI must preserve this as the paragraph's opening sentence and should not relocate or remove it. Used to mark key topic sentences that establish paragraph structure. | `\aianchor{Static profiling presents unique challenges.}` |
+| `\aianchor{text}` | Anchor for the first sentence of a paragraph. The AI must preserve this as the paragraph's opening sentence and should not relocate or remove it. Used to mark key topic sentences that establish paragraph structure. | `\aianchor{This design rests on three assumptions.}` |
 | `\aireview[<1-10>]{text}{comment}` | AI review of text with importance rating (1=low/cyan, 10=critical/blue) | `\aireview[7]{unclear phrase}{Consider rephrasing for clarity}` |
 | `\ainote{text}` | Note for the AI to address in a future edit. Invisible in PDF. | `\ainote{Add a citation once the artifact DOI is assigned}` |
 | `\airule{text}` | Rule that AI must follow. **Section-scoped** (see below). Invisible in PDF. | `\airule{All performance numbers must match evaluation section}` |
@@ -42,11 +42,11 @@ Both `\airule` and `\aiguideline` are **section-scoped**: they apply from where 
 \airule{Performance numbers must reference Table 2}
 % ↳ applies to all of Section 5 (5.1, 5.2, 5.3, 5.4)
 
-\subsection{Control Split Results}  % 5.1
+\subsection{Throughput Results}  % 5.1
 \aiguideline{Use percentage format with 2 decimal places}
 % ↳ both \airule AND \aiguideline apply here
 
-\subsection{Method Hotness Results}  % 5.2
+\subsection{Latency Results}  % 5.2
 % ↳ only the \airule applies here (guideline was subsection-scoped to 5.1)
 
 \section{Related Work}  % Section 6
@@ -81,6 +81,16 @@ The underlying script is [`scripts/verify_aikeep.py`](scripts/verify_aikeep.py);
 `make` targets above come from [`make/aiwriting.mk`](make/aiwriting.mk).
 
 The manifest file (`.aikeep-manifest.json`) tracks all protected content with SHA-256 hashes. It should be committed to version control.
+
+Hashes cover whitespace-normalized content, so re-wrapping a line inside a
+protected block is allowed — the rendered text is what is frozen, not the source
+bytes. Moving a block to a different line is allowed too. Changing so much as one
+character of its actual text is not.
+
+Verification reports four outcomes: `MODIFIED` (text was edited), `REMOVED` (the
+block or its `\aikeep{}`/`\aianchor{}` wrapper was deleted), `ORDER VIOLATION`
+(anchors were reordered) and `NEW` (a block was added — a warning, not a
+failure). The first three fail the build.
 
 **Difference between `\aikeep` and `\aianchor`:**
 
@@ -119,8 +129,8 @@ content or length.
 ## Writing Guidelines
 
 1. **Technical Precision**: Use exact terminology consistently. Pick one term per
-   concept and never alternate synonyms (e.g. "control-split", not sometimes
-   "branch split").
+   concept and never alternate synonyms: if the paper calls something a
+   "worker", it is never also "a thread" or "a task runner".
 2. **Quantitative Claims**: All performance numbers must have citations or
    experimental backing. Never invent, round, or extrapolate a number that does
    not appear in a table, figure, or cited source.
@@ -141,7 +151,8 @@ A paper using this library is expected to expose these targets:
 
 | Command | Description |
 |---------|-------------|
-| `make` or `make pdf` | Build the PDF |
+| `make` or `make pdf` | Build the print-ready PDF (review comments hidden) |
+| `make draft` | Build with review comments visible, to a **separate** file |
 | `make watch` | Continuous compilation (rebuilds on file changes) |
 | `make images` | Convert PDF pages to PNG images in `build/images/` |
 | `make verify` | **REQUIRED after editing .tex files** — verify protected content |

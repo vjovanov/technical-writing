@@ -9,7 +9,7 @@ This document provides instructions for AI agents working on this academic paper
 submission.
 
 **The annotation system, verification workflow, and general writing rules live in
-the shared library:** [`<PATH_TO>/technical-writing/AGENTS.md`](../technical-writing/AGENTS.md).
+the shared library:** [`<PATH_TO>/technical-writing/ai-writing/AGENTS.md`](../technical-writing/ai-writing/AGENTS.md).
 Read that file first — it is authoritative for `\aikeep`, `\aianchor`, `\airule`,
 `\aiguideline`, `\review`, `\aireview`, and the mandatory `make verify` step.
 This file covers only what is specific to *this* paper.
