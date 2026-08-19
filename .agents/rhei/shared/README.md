@@ -16,8 +16,9 @@ pick one of these:
 template directory, where rhei looks second:
 
 ```bash
+# from a checkout of this repository
 mkdir -p ~/.agents/rhei/templates
-for t in ~/c/technical-writing/.agents/rhei/templates/*/; do
+for t in "$PWD"/.agents/rhei/templates/*/; do
   ln -sfn "$t" ~/.agents/rhei/templates/
 done
 rhei templates          # all eight now listed as `user` scope
@@ -29,7 +30,7 @@ command below works from any directory.
 **Or name the template by path**, with no install:
 
 ```bash
-rhei instantiate ~/c/technical-writing/.agents/rhei/templates/paper-ingest \
+rhei instantiate /path/to/technical-writing/.agents/rhei/templates/paper-ingest \
   ../submission-42.pdf --output paper-ingest/
 ```
 
@@ -49,6 +50,78 @@ trying to find out.
 | Find my paper's weaknesses before reviewers do | [Mock review](#3-mock-review) | 5 | 0–2 |
 | Check my related work is complete | [Related-work check](#4-related-work-check) | 2 | 0 |
 | Dig into one weak section | [Section deep dive](#5-section-deep-dive) | 3 | 0 |
+
+### Run it as one Panta project (recommended)
+
+A rhei **project** has one Panta root, and any workspace directory dropped into it
+becomes a rhei under that root. Do that with the pipeline and you get one graph
+instead of eight loose workspaces: `rhei list` shows every ticket under its
+project-qualified id, `rhei validate` checks the whole thing, and **a single
+`rhei run` drives the pipeline in dependency order** — because `**Prior:**`
+resolves across rheis.
+
+Each template takes a `prior` input for exactly this. Leave it empty for a
+standalone workspace; set it to the upstream tickets when the workspaces are
+members of a project.
+
+```bash
+mkdir review-42 && cd review-42
+rhei init --here --title "Review 42"
+
+# Settings live at the project root. A member rhei's own settings.json is
+# ignored — rhei warns about this, and it is the one thing to get right.
+mkdir -p .agents/rhei
+rhei instantiate paper-ingest ../submission-42.pdf --set paper_id=submission-42 \
+  --output paper-ingest/
+cp paper-ingest/.agents/rhei/settings.json .agents/rhei/settings.json
+
+rhei instantiate venue-intake https://2026.splashcon.org/track/OOPSLA --output venue-intake/
+
+rhei instantiate related-work   --set paper_id=submission-42 --keep-on-error \
+  --set prior='Task paper-ingest.ingest' --output related-work/
+rhei instantiate overall-review --set paper_id=submission-42 --keep-on-error \
+  --set prior='Task paper-ingest.ingest, Task venue-intake.venue' --output overall-review/
+rhei instantiate section-review --set paper_id=submission-42 --keep-on-error \
+  --set prior='Task paper-ingest.ingest, Task venue-intake.venue' --output section-review/
+
+rhei validate                      # the whole project, all five rheis
+rhei run --parallel 6              # one command drives all of them
+```
+
+**Why `--keep-on-error`.** `rhei instantiate` validates its output *in isolation*,
+before it is part of the project, so a cross-rhei `prior` fails that check with
+"no rhei named 'paper-ingest' in this project". The workspace is still written
+correctly. The project-level `rhei validate` on the next line is the check that
+counts — if it passes, the wiring is right.
+
+**`pc-member-review` comes second.** `section-review`'s merge task is spawned at
+run time by its coordinator, so it does not exist yet when the project is first
+built, and a `prior` naming it cannot resolve. Add it once the reviews are done:
+
+```bash
+rhei instantiate pc-member-review --set paper_id=submission-42 --keep-on-error \
+  --set prior='Task overall-review.merge, Task section-review.merge' \
+  --output pc-member-review/
+rhei validate && rhei run
+```
+
+`rhei list` at any point shows the whole review as one tree:
+
+```
+Task paper-ingest.ingest: Ingest submission-42 [ingest]
+Task venue-intake.venue: Resolve OOPSLA 2026 [resolve-venue]
+Task venue-intake.committee: Harvest the program committee [harvest-pc] (prior: venue-intake.venue)
+Task overall-review.import: Import and check the inputs [import-inputs] (prior: paper-ingest.ingest, venue-intake.venue)
+Task overall-review.review-academic: Overall review — Academic reviewer [review-overall-academic] (prior: overall-review.import)
+...
+```
+
+The flows below are written as standalone workspaces, which is simpler to read and
+works without a project. To run any of them under Panta, add `rhei init --here`,
+put the settings at the project root, add the `--set prior=...` shown above, and
+replace the per-workspace `rhei run` calls with one project-wide `rhei run`.
+
+---
 
 ### The one convention that matters
 

@@ -60,6 +60,11 @@ Name each workspace after the template that made it and the pipeline wires itsel
 — every upstream input defaults to `../<template-name>/<its output>`, so you never
 pass a path.
 
+Better still, run them as **one Panta project**: `rhei init --here`, drop the
+workspaces in, and a single `rhei run` drives the whole pipeline in dependency
+order, because `**Prior:**` resolves across rheis. Each template takes a `prior`
+input for exactly that. `rhei list` then shows the whole review as one tree.
+
 | Template | Answers |
 |---|---|
 | `paper-ingest` | What does this paper actually say? *(PDF or LaTeX — settled once, here)* |

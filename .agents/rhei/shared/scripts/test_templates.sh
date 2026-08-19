@@ -178,6 +178,46 @@ fi
 cd "$ROOT"
 
 echo
+echo "== the pipeline runs as one Panta project =="
+PANTA="$WORK/panta"
+mkdir -p "$PANTA" && cd "$PANTA"
+rhei init --here --title "Test Review" >/dev/null 2>&1
+TDIR="$ROOT/.agents/rhei/templates"
+rhei instantiate "$TDIR/paper-ingest" ../x.pdf --set paper_id=submission-42 \
+  --output paper-ingest/ >/dev/null 2>&1
+mkdir -p .agents/rhei
+cp paper-ingest/.agents/rhei/settings.json .agents/rhei/settings.json
+rhei instantiate "$TDIR/venue-intake" --set conference=https://example.org/v \
+  --output venue-intake/ >/dev/null 2>&1
+# Cross-rhei priors fail instantiate's isolated pre-check but are correct
+# project-wide, which is what the project-level validate below proves.
+rhei instantiate "$TDIR/related-work" --set paper_id=submission-42 --keep-on-error \
+  --set prior='Task paper-ingest.ingest' --output related-work/ >/dev/null 2>&1
+rhei instantiate "$TDIR/overall-review" --set paper_id=submission-42 --keep-on-error \
+  --set prior='Task paper-ingest.ingest, Task venue-intake.venue' \
+  --output overall-review/ >/dev/null 2>&1
+rhei instantiate "$TDIR/section-review" --set paper_id=submission-42 --keep-on-error \
+  --set prior='Task paper-ingest.ingest, Task venue-intake.venue' \
+  --output section-review/ >/dev/null 2>&1
+
+if rhei validate >/dev/null 2>&1; then
+  ok "five rheis validate as one project with cross-rhei priors"
+else
+  bad "panta project validation" "$(rhei validate 2>&1 | grep -vE 'is ignored|settings merge|Check both' | tail -6)"
+fi
+
+# Only the two root rheis may be ready first; everything else waits on them.
+first=$(rhei run --dry-run 2>&1 | grep -A1 "^Pass 1:" | grep "^Ready:")
+if echo "$first" | grep -q "paper-ingest.ingest" \
+   && echo "$first" | grep -q "venue-intake.venue" \
+   && ! echo "$first" | grep -q "overall-review.import"; then
+  ok "one project-wide run orders the pipeline correctly"
+else
+  bad "panta ordering" "$first"
+fi
+cd "$ROOT"
+
+echo
 echo "-------------------------------------------"
 printf '%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

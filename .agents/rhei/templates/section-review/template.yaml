@@ -80,6 +80,16 @@ inputs:
     description: How many times the agent may repair the artifact before the run stops for a human
     type: number
     default: 2
+  - name: prior
+    description: >-
+      Tickets this workspace must wait for, as a comma-separated list of
+      rhei-qualified ids (e.g. "Task paper-ingest.ingest, Task venue-intake.venue").
+      Leave empty when running this template as a standalone workspace. Set it when
+      the workspaces are members of one Panta project, so a single `rhei run` drives
+      the whole pipeline in dependency order.
+    type: string
+    default: ""
+
   - name: agent_timeout
     description: Per-agent wall-clock timeout, e.g. "30m" or "2h"
     type: string
