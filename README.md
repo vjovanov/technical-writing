@@ -4,6 +4,30 @@ Tooling and templates for technical writing and peer review.
 
 ## Contents
 
+### [`ai-writing/`](ai-writing/) — LaTeX annotations for AI--human collaboration
+
+A LaTeX package plus verification tooling for editing papers alongside AI agents.
+It lets you mark, in the `.tex` source, which text an agent may rewrite and which
+it must leave alone, and turns that intent into a check that fails the build:
+
+- **Protected text** — `\aikeep{}` freezes a span outright; `\aianchor{}` pins a
+  topic sentence to the start of its paragraph and to its position relative to
+  other anchors. Both are hashed into a committed manifest.
+- **Directives** — `\airule{}` and `\aiguideline{}` carry section-scoped
+  instructions to the agent, invisible in the PDF; guidelines are also written to
+  a sidecar file for tooling. `\ainote{}` leaves a to-do.
+- **Reviews** — `\review{}` and `\aireview{}` attach a 1--10 importance rating
+  and a comment, rendered inline only in a draft build.
+- **`make verify`** — fails with a non-zero exit code on modified, removed, or
+  reordered protected content, and is meant to run after every `.tex` edit.
+- **Reviewer personas** — three stances (academic, industry-friendly,
+  industry-skeptical) for adversarial self-review before submission.
+
+See [`ai-writing/README.md`](ai-writing/README.md) for setup and
+[`ai-writing/AGENTS.md`](ai-writing/AGENTS.md) for the rules agents are expected
+to follow. [`ai-writing/example/`](ai-writing/example/) is a self-contained paper
+exercising every annotation.
+
 ### [`paper-review/`](paper-review/) — rhei template
 
 A multi-model conference paper review pipeline, packaged as a
