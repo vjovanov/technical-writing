@@ -160,6 +160,10 @@ before it is part of the project, so a cross-rhei `prior` fails that check with
 correctly. The project-level `rhei validate` on the next line is the check that
 counts — if it passes, the wiring is right.
 
+`rhei instantiate` still **exits non-zero** in this case, so a script running under
+`set -e` will stop on it. Either drop `set -e` around these calls or append
+`|| true`, and rely on the project-level validate to catch a genuine mistake.
+
 **`pc-member-review` comes second.** `section-review`'s merge task is spawned at
 run time by its coordinator, so it does not exist yet when the project is first
 built, and a `prior` naming it cannot resolve. Add it once the reviews are done:

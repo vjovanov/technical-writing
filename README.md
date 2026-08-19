@@ -92,26 +92,68 @@ Splitting the old monolith means you can redo one step alone: a re-run of
 `overall-review` with better personalities does not re-read the paper, re-fetch
 the venue, or re-sweep the literature.
 
-#### Running each template
+#### Setup (once)
 
-Every command below is verified. They assume you installed the templates once:
+**1. Make the templates available everywhere.** They live in this repository, so
+rhei only finds them by bare name from inside it. Symlink them into your user
+template directory and they work from any directory — symlinks rather than copies,
+so a `git pull` here updates them:
 
 ```bash
 # from a checkout of this repository
 mkdir -p ~/.agents/rhei/templates
 for t in "$PWD"/.agents/rhei/templates/*/; do ln -sfn "$t" ~/.agents/rhei/templates/; done
+
+rhei templates          # all eight are now listed
 ```
 
-Without that, replace the bare template name with its path
+Skip this if you prefer, and name each template by path instead
 (`rhei instantiate /path/to/technical-writing/.agents/rhei/templates/paper-ingest …`).
 
-Work in one directory per paper, with each workspace named after the template that
-made it — that is what lets every downstream template find its inputs with no
-path arguments:
+**2. Create the project that will hold your reviews.** Either one per paper, or
+one shared home for all of them.
+
+*A shared `~/panta`* — every review you ever run in one place, so `rhei list`
+shows them all and one `rhei run` advances all of them:
 
 ```bash
-mkdir review-42 && cd review-42
+mkdir -p ~/panta && cd ~/panta && rhei init --here --title "Reviews"
 ```
+
+Create it **in place** like that, not with `rhei init ~`: the latter puts the
+project at `~/panta/` but also writes `AGENTS.md` and `.gitignore` into `$HOME`
+itself.
+
+*Or one project per paper* — self-contained, archive or delete it whole:
+
+```bash
+mkdir review-42 && cd review-42 && rhei init --here --title "Review 42"
+```
+
+**3. Put the agent settings at the project root.** A member rhei's own
+`settings.json` is ignored — rhei warns about this, and it is the one thing that
+silently breaks agent resolution. Render one and copy it up:
+
+```bash
+mkdir -p .agents/rhei
+rhei instantiate paper-ingest /dev/null --set paper_id=seed --output /tmp/seed
+cp /tmp/seed/.agents/rhei/settings.json .agents/rhei/settings.json && rm -rf /tmp/seed
+```
+
+Edit that file to declare any agent your selectors name — the default declares
+`codex`, and `claude-code` needs no declaration.
+
+#### Running each template
+
+Every command below is verified. Work in the project directory from step 2, with
+each workspace named after the template that made it — that is what lets every
+downstream template find its inputs with no path arguments.
+
+In a shared `~/panta`, rhei ids must be unique across every paper and discovery
+does not descend into subfolders, so suffix the workspaces per paper
+(`paper-ingest-42/`) and pass the upstream paths explicitly. [Both layouts are
+written out in full](.agents/rhei/shared/README.md#where-the-project-lives); the
+commands below use the per-paper form.
 
 **1. `paper-ingest`** — read the paper once. Everything else depends on this.
 
