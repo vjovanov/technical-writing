@@ -1,0 +1,69 @@
+name: related-work
+version: 1.0.0
+description: Deep literature sweep for the work a submission must be judged against, independent of the program committee, into a schema-validated related-work.json.
+
+inputs:
+  - name: paper
+    description: paper.json produced by paper-ingest
+    type: string
+    default: ../paper-ingest/paper/paper.json
+
+  - name: paper_id
+    description: Stable identifier, matching the one in paper.json
+    type: string
+    default: submission
+
+  - name: max_papers
+    description: Cap on papers indexed
+    type: number
+    default: 20
+
+  - name: download_pdfs
+    description: Whether to download openly accessible PDFs into related/pdfs/
+    type: boolean
+    default: true
+
+  - name: search_target
+    description: Agent target that runs the literature sweep
+    type: string
+    format: execution-target
+    default: claude-code[yolo]:anthropic:claude-opus-5
+
+  - name: repair_target
+    description: Agent target that repairs schema violations
+    type: string
+    format: execution-target
+    default: claude-code[yolo]:anthropic:claude-opus-5
+
+  - name: repair_attempts
+    description: How many times the agent may repair the artifact before the run stops for a human
+    type: number
+    default: 2
+
+  - name: agent_timeout
+    description: Per-agent wall-clock timeout, e.g. "30m" or "2h"
+    type: string
+    default: 30m
+
+  - name: agents_json
+    description: >-
+      JSON object declaring the agent programs your selectors refer to, written verbatim
+      into .agents/rhei/settings.json. Any agent named in a selector must be declared here
+      or in your global rhei settings, including the modes used in brackets — an undeclared
+      agent or mode fails instantiation. Supply with --set-file agents_json=<file>. The
+      default declares `codex`; `claude-code` and other built-ins need no declaration.
+    type: string
+    default: |
+      {
+        "codex": {
+          "command": ["codex", "exec"],
+          "model_flag": "--model",
+          "stdin_prompt": true,
+          "mcp_flag": "--mcp",
+          "modes": {
+            "yolo": ["--sandbox", "workspace-write", "--skip-git-repo-check", "-c", "approval_policy=\"on-request\""],
+            "high": ["--sandbox", "workspace-write", "--skip-git-repo-check", "-c", "approval_policy=\"on-request\"", "-c", "model_reasoning_effort=\"high\""],
+            "xhigh": ["--sandbox", "workspace-write", "--skip-git-repo-check", "-c", "approval_policy=\"on-request\"", "-c", "model_reasoning_effort=\"xhigh\""]
+          }
+        }
+      }

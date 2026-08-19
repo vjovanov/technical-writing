@@ -1,0 +1,324 @@
+# State machine diagram
+# ---------------------
+#
+# Legend: [final] [gate] = gating (only a human transitions out)
+#         [program] = deterministic command, routes on exit code
+#
+#   import task:
+#     import-inputs [program] ── exit 0 ────> completed [final]
+#          \__ nonzero __> inputs-rejected [gate, final]
+#
+#   one review task per configured personality, all concurrent, each waiting on
+#   Task import and each running its own state on its own target:
+#
+#     review-overall-<personality-id>  (concurrent) --> completed [final]
+#
+#   merge task (waits on every review task via **Prior:**):
+#     merge-reviews ({{merge_target}})
+#        |
+#        v
+#     validate-overall-reviews [program] ── exit 0 ──────> completed [final]
+#        |         \
+#        |          \── nonzero, visitCount >= visits --> overall-reviews-failed [gate, final]
+#        |
+#        +-- nonzero, visitCount < visits --> repair-overall-reviews --> validate-overall-reviews
+#
+#   any non-final state --> cancelled [final]
+#
+# One state is generated per personality rather than using all_targets, because
+# a personality is a stance and not just a model: each needs its own prompt as
+# well as its own target. Fanning one shared prompt across models would produce
+# sampling noise where the point is genuine disagreement.
+#
+# Per-task paths:
+#   import:              import-inputs -> completed | inputs-rejected
+#   review-<id>:         review-overall-<id> -> completed
+#   merge:               merge-reviews -> validate-overall-reviews
+#                        [-> repair-overall-reviews -> validate-overall-reviews]
+#                        -> completed | overall-reviews-failed
+
+name: overall-review
+version: 1.0.0
+
+states:
+  import-inputs:
+    description: Copy the upstream artifacts into this workspace, rejecting anything that does not meet its contract.
+    program: >-
+      python3 scripts/import_artifact.py --schema-dir schemas
+      --source {{paper}} --dest inputs/paper.json --expect-artifact paper &&
+      python3 scripts/import_artifact.py --schema-dir schemas
+      --source {{venue}} --dest inputs/venue.json --expect-artifact venue
+      {%- if related_work %} &&
+      python3 scripts/import_artifact.py --schema-dir schemas --optional
+      --source {{related_work}} --dest inputs/related-work.json
+      --expect-artifact related-work
+      {%- endif %}
+    program_timeout: 3m
+    outputs:
+      - name: paper
+        path: inputs/paper.json
+        description: paper.json imported from the paper-ingest workspace
+      - name: venue
+        path: inputs/venue.json
+        description: venue.json imported from the venue-intake workspace
+
+  inputs-rejected:
+    description: Human gate — an upstream artifact is missing, is the wrong artifact, or fails its schema.
+    gating: true
+    final: true
+    instructions: |
+      An input to Task {task_id} did not meet its contract. This task's result
+      file names the file and the exact problem.
+
+      Expected inputs:
+
+      - `{{paper}}` — a `paper` artifact from a `paper-ingest` workspace
+      - `{{venue}}` — a `venue` artifact from a `venue-intake` workspace
+      {% if related_work %}
+      - `{{related_work}}` — a `related-work` artifact (optional; a missing
+        file is tolerated, a malformed one is not)
+      {% endif %}
+
+      Fix the source, then re-run this task from `import-inputs`.
+
+{%- for p in personalities %}
+
+  review-overall-{{ p.id }}:
+    description: Whole-paper review from the {{ p.label }} stance.
+    concurrent: true
+    target: {{ p.selector }}
+    inputs:
+      - name: paper
+        path: inputs/paper.json
+      - name: venue
+        path: inputs/venue.json
+    personality: |
+      {{ p.stance }}
+
+      You are reviewing independently. Do not try to guess or match what other
+      reviewers will say — the value of this review is that it is yours.
+    instructions: |
+      Review the paper for Task {task_id}: {task_title}.
+
+      Read `{input.paper.path}` for the structured reading of the paper and the
+      `full_text_path` it names for the prose itself. Read `{input.venue.path}`
+      for what this venue selects for — a paper is reviewed against its venue,
+      not against an abstract ideal.
+      {% if related_work %}
+      Read `inputs/related-work.json` if it exists, for what the paper must be
+      judged against. If it is absent, review without it and say so in your
+      summary rather than guessing at the literature.
+      {% endif %}
+
+      Write `{output.review.path}`: a single JSON object matching one entry of
+      the `reviews[]` array in `schemas/overall-reviews.schema.json`, with:
+
+      - `personality_id`: `{{ p.id }}`
+      - `personality_label`: `{{ p.label }}`
+      - `target`: `{{ p.selector }}`
+      - `summary`: the paper in your own words — problem, approach, claimed
+        contribution, significance to this venue's community.
+      - `strengths[]` / `weaknesses[]`: each with a `statement`, a `severity`,
+        and an `evidence_ref` pointing at the section, table, or figure that
+        grounds it. A weakness without an evidence reference is an impression,
+        not a finding. Where a weakness attacks a specific claim, set
+        `claim_id` to its `K` id from the paper artifact.
+      - `questions[]`: what you would actually ask the authors in a rebuttal.
+      - `scores[]`: one entry per scored field in the venue's
+        `review_form.fields`, using that field's `id` and its declared scale.
+      - `recommendation` and `confidence`: your honest position. Do not
+        moderate toward the middle to seem reasonable.
+
+      Do not invent experimental results, and do not assert a missing citation
+      unless you can name a plausible candidate work.
+
+      `examples/overall-reviews.json` shows the shape of a full artifact; you
+      are writing one element of its `reviews[]` array.
+
+      Transition to `completed` when your review is written.
+    outputs:
+      - name: review
+        path: reviews/overall/{{ p.id }}.json
+        description: Overall review from the {{ p.label }} stance
+{%- endfor %}
+
+  merge-reviews:
+    description: Merge every per-personality review into one artifact, preserving disagreement.
+    target: {{merge_target}}
+    inputs:
+      - name: paper
+        path: inputs/paper.json
+    personality: |
+      You are assembling several independent reviews into one record. You are a
+      merger, not a judge: do not reconcile disagreements, soften a harsh
+      review, or strengthen a lenient one. Where reviewers disagree, the
+      disagreement is the finding.
+    instructions: |
+      Merge the overall reviews for Task {task_id}: {task_title}.
+
+      Read every JSON file under `reviews/overall/` — one per reviewer
+      personality:
+      {% for p in personalities %}
+      - `reviews/overall/{{ p.id }}.json` — {{ p.label }}
+      {%- endfor %}
+
+      Write `{output.reviews.path}` conforming to
+      `schemas/overall-reviews.schema.json`:
+
+      - `artifact`: `overall-reviews`, `schema_version`: `1.0`,
+        `generated_by`: `overall-review`
+      - `paper_id`: `{{paper_id}}`
+      - `reviews[]`: every per-personality object, copied faithfully.
+
+      Copy each review's content as written. Do not merge duplicate findings,
+      re-score, drop a review you disagree with, or edit wording for
+      consistency — `pc-member-review` deduplicates and verifies later, and it
+      needs the unmerged originals to see how many independent reviewers raised
+      the same point.
+
+      If a personality's file is missing because its task failed, include the
+      reviews that exist and record the gap in this task's result file rather
+      than fabricating the missing review.
+
+      Transition to `validate-overall-reviews` when the artifact is written.
+    outputs:
+      - name: reviews
+        path: reviews/overall-reviews.json
+        description: All per-personality overall reviews in one artifact
+
+  validate-overall-reviews:
+    description: Check overall-reviews.json against its schema. Deterministic — a program, not an agent.
+    program: "python3 scripts/validate_artifact.py --schema-dir schemas --instance reviews/overall-reviews.json --expect-artifact overall-reviews"
+    program_timeout: 2m
+    visits: {{repair_attempts}}
+    inputs:
+      - name: overall-reviews
+        path: reviews/overall-reviews.json
+
+  repair-overall-reviews:
+    description: The agent fixes the schema violations the validator reported in overall-reviews.json.
+    target: {{repair_target}}
+    visits: {{repair_attempts}}
+    inputs:
+      - name: overall-reviews
+        path: reviews/overall-reviews.json
+    personality: |
+      You are correcting a structured artifact that failed its schema contract.
+      Fix the artifact to match the schema. Never weaken the schema, and never
+      invent content to satisfy a required field — a fabricated value passes
+      validation and then misleads every template downstream.
+    instructions: |
+      Repair pass {visit_count} of {visits} for Task {task_id}: {task_title}.
+
+      `{input.overall-reviews.path}` failed validation against
+      `schemas/overall-reviews.schema.json`. The validator wrote every problem, each
+      with its JSON path, into this task's result file. Read it, read the
+      schema, and fix each one.
+
+      The schemas are closed (`additionalProperties: false`), so an unexpected
+      property must be removed rather than renamed. Ids constrained by a
+      pattern must match it exactly.
+
+      Transition to `validate-overall-reviews` when the artifact is corrected.
+
+  overall-reviews-failed:
+    description: Human gate — overall-reviews.json still fails its schema after every repair attempt.
+    gating: true
+    final: true
+    inputs:
+      - name: overall-reviews
+        path: reviews/overall-reviews.json
+    instructions: |
+      Overall reviews could not be made schema-valid for Task {task_id} within
+      {{repair_attempts}} repair attempts.
+
+      Read this task's result file for the outstanding violations, then fix
+      `reviews/overall-reviews.json` by hand and re-check it:
+
+        python3 scripts/validate_artifact.py --schema-dir schemas \
+          --instance reviews/overall-reviews.json --expect-artifact overall-reviews
+
+      Nothing downstream should consume this artifact until it validates.
+
+  completed:
+    description: The step is done.
+    final: true
+    instructions: |
+      No further action is required.
+
+  cancelled:
+    description: The review was cancelled.
+    final: true
+    instructions: |
+      Stop work and leave existing artifacts unchanged.
+
+transitions:
+  - from: import-inputs
+    to: completed
+    description: Every upstream artifact conforms to its schema.
+    exit_code: 0
+
+  - from: import-inputs
+    to: inputs-rejected
+    description: An upstream artifact is missing, wrong, or malformed.
+    exit_code: nonzero
+{% for p in personalities %}
+  - from: review-overall-{{ p.id }}
+    to: completed
+    description: The {{ p.label }} wrote its review.
+{% endfor %}
+  - from: merge-reviews
+    to: validate-overall-reviews
+    description: The merged artifact is written; check the contract.
+
+  - from: validate-overall-reviews
+    to: completed
+    description: The artifact conforms to its schema.
+    exit_code: 0
+
+  - from: validate-overall-reviews
+    to: repair-overall-reviews
+    description: The artifact violates its schema and repair attempts remain.
+    exit_code: nonzero
+    condition: visitCount < visits
+
+  - from: validate-overall-reviews
+    to: overall-reviews-failed
+    description: The artifact still violates its schema after every repair attempt.
+    exit_code: nonzero
+    condition: visitCount >= visits
+
+  - from: repair-overall-reviews
+    to: validate-overall-reviews
+    description: The agent corrected the artifact; re-check it.
+
+  - from: "*"
+    to: cancelled
+    description: Cancel the review from any non-final state.
+
+profiles:
+  workspace:
+    initial: completed
+    allowed:
+      - completed
+
+  review-task:
+    initial: import-inputs
+    allowed:
+      - import-inputs
+      - inputs-rejected
+{%- for p in personalities %}
+      - review-overall-{{ p.id }}
+{%- endfor %}
+      - merge-reviews
+      - validate-overall-reviews
+      - repair-overall-reviews
+      - overall-reviews-failed
+      - completed
+      - cancelled
+
+node_policy:
+  root: workspace
+  default: review-task
+  by_type:
+    task: review-task

@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "paper-pipeline/paper/1.0",
+  "title": "Paper",
+  "description": "Canonical machine-readable reading of one submission. Produced by paper-ingest from either a PDF or a LaTeX source tree; every other template in the pipeline reads this instead of re-reading the paper.",
+  "type": "object",
+  "required": ["artifact", "schema_version", "generated_by", "paper_id", "source_kind", "title", "sections", "contributions", "claims", "full_text_path"],
+  "additionalProperties": false,
+  "properties": {
+    "artifact": { "const": "paper" },
+    "schema_version": { "const": "1.0" },
+    "generated_by": { "type": "string", "minLength": 1 },
+    "paper_id": { "type": "string", "minLength": 1, "description": "Stable id used in filenames and cross-artifact references" },
+    "source_kind": { "enum": ["pdf", "latex"], "description": "Which ingest path produced this reading" },
+    "source_path": { "type": "string" },
+    "title": { "type": "string", "minLength": 1 },
+    "anonymous": { "type": "boolean", "description": "True when the submission is anonymized for double-blind review" },
+    "authors": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name"],
+        "additionalProperties": false,
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "affiliation": { "type": "string" },
+          "email": { "type": "string" }
+        }
+      }
+    },
+    "abstract": { "type": "string" },
+    "page_count": { "type": "integer", "minimum": 1 },
+    "full_text_path": { "type": "string", "minLength": 1, "description": "Faithful full-text extraction, relative to the workspace" },
+    "pages_dir": { "type": "string", "description": "Directory of per-page PNGs; PDF ingest only" },
+    "sections": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/section" }
+    },
+    "contributions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "statement"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string", "pattern": "^C[0-9]+$" },
+          "statement": { "type": "string", "minLength": 1, "description": "The contribution in the authors' own terms" },
+          "section_id": { "type": "string" }
+        }
+      }
+    },
+    "claims": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "statement"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string", "pattern": "^K[0-9]+$" },
+          "statement": { "type": "string", "minLength": 1, "description": "A specific falsifiable claim" },
+          "section_id": { "type": "string" },
+          "evidence_ref": { "type": "string", "description": "Table, figure, or section backing the claim" }
+        }
+      }
+    },
+    "topics": {
+      "type": "array",
+      "description": "Topic profile used to match the paper against PC members and literature",
+      "items": {
+        "type": "object",
+        "required": ["term"],
+        "additionalProperties": false,
+        "properties": {
+          "term": { "type": "string", "minLength": 1 },
+          "weight": { "type": "number", "minimum": 0, "maximum": 1 }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "section": {
+      "type": "object",
+      "required": ["id", "title", "kind"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "pattern": "^S[0-9]+$" },
+        "title": { "type": "string", "minLength": 1 },
+        "kind": { "enum": ["core", "boilerplate"], "description": "section-review spawns one review task per `core` section" },
+        "level": { "type": "integer", "minimum": 1 },
+        "pages": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "from": { "type": "integer", "minimum": 1 },
+            "to": { "type": "integer", "minimum": 1 }
+          }
+        },
+        "source_path": { "type": "string", "description": "Originating .tex file; LaTeX ingest only" }
+      }
+    }
+  }
+}

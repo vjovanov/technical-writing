@@ -1,0 +1,27 @@
+  - name: agent_timeout
+    description: Per-agent wall-clock timeout, e.g. "30m" or "2h"
+    type: string
+    default: 30m
+
+  - name: agents_json
+    description: >-
+      JSON object declaring the agent programs your selectors refer to, written verbatim
+      into .agents/rhei/settings.json. Any agent named in a selector must be declared here
+      or in your global rhei settings, including the modes used in brackets — an undeclared
+      agent or mode fails instantiation. Supply with --set-file agents_json=<file>. The
+      default declares `codex`; `claude-code` and other built-ins need no declaration.
+    type: string
+    default: |
+      {
+        "codex": {
+          "command": ["codex", "exec"],
+          "model_flag": "--model",
+          "stdin_prompt": true,
+          "mcp_flag": "--mcp",
+          "modes": {
+            "yolo": ["--sandbox", "workspace-write", "--skip-git-repo-check", "-c", "approval_policy=\"on-request\""],
+            "high": ["--sandbox", "workspace-write", "--skip-git-repo-check", "-c", "approval_policy=\"on-request\"", "-c", "model_reasoning_effort=\"high\""],
+            "xhigh": ["--sandbox", "workspace-write", "--skip-git-repo-check", "-c", "approval_policy=\"on-request\"", "-c", "model_reasoning_effort=\"xhigh\""]
+          }
+        }
+      }

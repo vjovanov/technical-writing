@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "paper-pipeline/review-points/1.0",
+  "title": "Review points",
+  "description": "Deduplicated, addressable, independently verified review points. Produced by pc-member-review from the overall and section reviews; the curated set is what the final review is written from.",
+  "type": "object",
+  "required": ["artifact", "schema_version", "generated_by", "paper_id", "points"],
+  "additionalProperties": false,
+  "properties": {
+    "artifact": { "const": "review-points" },
+    "schema_version": { "const": "1.0" },
+    "generated_by": { "type": "string", "minLength": 1 },
+    "paper_id": { "type": "string", "minLength": 1 },
+    "points": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "statement", "kind", "severity", "sources", "verdict"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string", "pattern": "^P-[0-9]{3}$", "description": "Stable handle cited from the final review as [P-xxx]" },
+          "statement": { "type": "string", "minLength": 1 },
+          "kind": { "enum": ["strength", "weakness", "question", "suggestion"] },
+          "severity": { "enum": ["major", "minor", "suggestion"] },
+          "section_id": { "type": "string" },
+          "sources": {
+            "type": "array",
+            "minItems": 1,
+            "description": "Which reviews raised this point — a point with several independent sources is stronger",
+            "items": {
+              "type": "object",
+              "required": ["origin", "personality_id"],
+              "additionalProperties": false,
+              "properties": {
+                "origin": { "enum": ["overall-review", "section-review"] },
+                "personality_id": { "type": "string" },
+                "section_id": { "type": "string" }
+              }
+            }
+          },
+          "verdict": {
+            "enum": ["confirmed", "weakened", "rejected"],
+            "description": "Verifier's finding. Rejected points never reach the report; weakened points use verified_statement."
+          },
+          "verified_statement": { "type": "string", "description": "Verifier's corrected wording when the verdict is `weakened`" },
+          "verification_note": { "type": "string" },
+          "evidence": { "type": "array", "items": { "type": "string" } },
+          "human_action": {
+            "enum": ["keep", "drop", "edit"],
+            "description": "Set by the human at the curation gate; overrides the verifier"
+          }
+        }
+      }
+    }
+  }
+}

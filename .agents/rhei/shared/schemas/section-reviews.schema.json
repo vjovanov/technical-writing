@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "paper-pipeline/section-reviews/1.0",
+  "title": "Section reviews",
+  "description": "Chapter-by-chapter findings, one entry per core section per personality. Produced by section-review.",
+  "type": "object",
+  "required": ["artifact", "schema_version", "generated_by", "paper_id", "reviews"],
+  "additionalProperties": false,
+  "properties": {
+    "artifact": { "const": "section-reviews" },
+    "schema_version": { "const": "1.0" },
+    "generated_by": { "type": "string", "minLength": 1 },
+    "paper_id": { "type": "string", "minLength": 1 },
+    "reviews": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["section_id", "section_title", "personality_id", "findings"],
+        "additionalProperties": false,
+        "properties": {
+          "section_id": { "type": "string", "pattern": "^S[0-9]+$", "description": "References paper.sections[].id" },
+          "section_title": { "type": "string", "minLength": 1 },
+          "personality_id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+          "target": { "type": "string" },
+          "assessment": { "type": "string", "description": "What this section does and whether it succeeds" },
+          "findings": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["id", "severity", "statement"],
+              "additionalProperties": false,
+              "properties": {
+                "id": { "type": "string", "pattern": "^F[0-9]+$" },
+                "severity": { "enum": ["major", "minor", "suggestion"] },
+                "kind": { "enum": ["soundness", "clarity", "novelty", "evidence", "reproducibility", "presentation", "related-work", "other"] },
+                "statement": { "type": "string", "minLength": 1 },
+                "evidence_ref": { "type": "string" },
+                "suggestion": { "type": "string", "description": "Concrete improvement path — a finding without one is a complaint, not a review" }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

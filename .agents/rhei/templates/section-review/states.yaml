@@ -1,0 +1,377 @@
+# State machine diagram
+# ---------------------
+#
+# Legend: [final] [gate] = gating (only a human transitions out)
+#         [program] = deterministic command, routes on exit code
+#
+#   coordinate task:
+#     import-inputs [program] ── nonzero ──> inputs-rejected [gate, final]
+#        |
+#        | exit 0
+#        v
+#     plan-sections ({{coordinator_target}})
+#        |  appends, at run time:
+#        |    tasks/NN-review-<section>-<personality>.md  (one per core section
+#        |                                                 per personality)
+#        |    tasks/90-merge.md  whose **Prior:** names every one of them
+#        v
+#     completed [final]
+#
+#   spawned review tasks (concurrent, one state per personality):
+#     review-section-<personality-id> --> completed [final]
+#
+#   spawned merge task:
+#     merge-sections ({{merge_target}})
+#        |
+#        v
+#     validate-section-reviews [program] ── exit 0 ─────> completed [final]
+#        |         \
+#        |          \── nonzero, visitCount >= visits --> section-reviews-failed [gate, final]
+#        |
+#        +-- nonzero, visitCount < visits --> repair-section-reviews --> validate-section-reviews
+#
+#   any non-final state --> cancelled [final]
+#
+# The number of review tasks is decided at run time from the paper's own section
+# map, not fixed at instantiation — which is why a coordinator spawns them
+# instead of a {% raw %}{% for %}{% endraw %} loop over an input.
+#
+# Per-task paths:
+#   coordinate:  import-inputs -> plan-sections -> completed | inputs-rejected
+#   review-*:    review-section-<personality-id> -> completed
+#   merge:       merge-sections -> validate-section-reviews
+#                [-> repair-section-reviews -> validate-section-reviews]
+#                -> completed | section-reviews-failed
+
+name: section-review
+version: 1.0.0
+
+states:
+  import-inputs:
+    description: Copy the upstream artifacts into this workspace, rejecting anything that does not meet its contract.
+    program: >-
+      python3 scripts/import_artifact.py --schema-dir schemas
+      --source {{paper}} --dest inputs/paper.json --expect-artifact paper &&
+      python3 scripts/import_artifact.py --schema-dir schemas
+      --source {{venue}} --dest inputs/venue.json --expect-artifact venue
+      {%- if related_work %} &&
+      python3 scripts/import_artifact.py --schema-dir schemas --optional
+      --source {{related_work}} --dest inputs/related-work.json
+      --expect-artifact related-work
+      {%- endif %}
+    program_timeout: 3m
+    outputs:
+      - name: paper
+        path: inputs/paper.json
+        description: paper.json imported from the paper-ingest workspace
+      - name: venue
+        path: inputs/venue.json
+        description: venue.json imported from the venue-intake workspace
+
+  inputs-rejected:
+    description: Human gate — an upstream artifact is missing, is the wrong artifact, or fails its schema.
+    gating: true
+    final: true
+    instructions: |
+      An input to Task {task_id} did not meet its contract. This task's result
+      file names the file and the exact problem.
+
+      Expected inputs:
+
+      - `{{paper}}` — a `paper` artifact from a `paper-ingest` workspace
+      - `{{venue}}` — a `venue` artifact from a `venue-intake` workspace
+
+      Fix the source, then re-run this task from `import-inputs`.
+
+  plan-sections:
+    description: Read the section map and append one review task per core section per personality, plus the merge task.
+    target: {{coordinator_target}}
+    inputs:
+      - name: paper
+        path: inputs/paper.json
+    personality: |
+      You are planning work, not doing it. Write task files that another agent
+      can execute without further context, and do not review the paper here.
+    instructions: |
+      Plan the section reviews for Task {task_id}: {task_title}.
+
+      Read `{input.paper.path}`. Every entry in `sections[]` whose `kind` is
+      `core` gets reviewed; `boilerplate` sections are skipped.
+
+      1. For each `core` section, and for each reviewer personality below,
+         append one file `tasks/<NN>-review-<section-slug>-<personality-id>.md`,
+         numbering from 10. `<section-slug>` is a kebab-case slug of the section
+         title. Each file must be exactly:
+
+           ### Task review-<section-slug>-<personality-id>: <Section title> — <Personality label>
+           **State:** review-section-<personality-id>
+           **Prior:** Task {task_id}
+
+           Review section <S-id>: <section title> (pages <from>-<to>) of
+           `{{paper_id}}` as <Personality label>.
+
+           What this section claims or does: <one or two sentences, from the
+           paper itself>.
+
+           Questions this review must answer: <2-5 concrete questions specific
+           to this section — the soundness of a technique, an unstated
+           assumption, whether a definition is precise enough to build on,
+           whether the numbers here support the claims made here>.
+
+         The personalities, with the state each maps to:
+      {% for p in personalities %}
+         - `{{ p.id }}` — {{ p.label }} — state `review-section-{{ p.id }}`
+      {%- endfor %}
+
+         Replace every angle-bracket placeholder with concrete text. Ids must
+         be unique, stable, and kebab-case. Do not leave a placeholder behind.
+
+      2. Append `tasks/90-merge.md`, whose task id must be exactly `merge`:
+
+           ### Task merge: Merge the section reviews
+           **State:** merge-sections
+           **Prior:** Task review-<slug-1>-<pid-1>, Task review-<slug-2>-<pid-2>, ...
+
+           Merge every per-section finding into the schema-validated
+           `reviews/section-reviews.json`.
+
+         The `**Prior:**` list must name every task you appended in step 1,
+         comma-separated, with no ellipsis and no trailing comma. Do not list
+         this coordinator task there.
+
+      3. Write `{output.plan.path}`: a table of every task you appended, the
+         section it covers, and the personality reviewing it.
+
+      Transition to `completed` when every task file is appended.
+    outputs:
+      - name: plan
+        path: runtime/manifests/{task_id}-section-plan.md
+        description: Manifest of the spawned section-review tasks
+
+{%- for p in personalities %}
+
+  review-section-{{ p.id }}:
+    description: Review one section from the {{ p.label }} stance.
+    concurrent: true
+    target: {{ p.selector }}
+    inputs:
+      - name: paper
+        path: inputs/paper.json
+      - name: venue
+        path: inputs/venue.json
+    personality: |
+      {{ p.stance }}
+
+      You are reviewing one section, not the whole paper. Judge it on what it
+      sets out to do and on whether the rest of the paper can stand on it. Do
+      not fault it for work that belongs in another section, and do not restate
+      the paper's overall verdict — that review happens elsewhere.
+    instructions: |
+      Review the section named in Task {task_id}: {task_title}.
+
+      Read `{input.paper.path}` for the section map and the `full_text_path` it
+      names, then read the section this task covers, in full, plus enough of the
+      surrounding text to judge it fairly. Read `{input.venue.path}` for the
+      standard this venue holds work to.
+
+      Write `{output.findings.path}`: a single JSON object matching one entry of
+      the `reviews[]` array in `schemas/section-reviews.schema.json`, with:
+
+      - `section_id` and `section_title` exactly as they appear in the paper
+        artifact.
+      - `personality_id`: `{{ p.id }}`, `target`: `{{ p.selector }}`.
+      - `assessment`: what this section does and whether it succeeds.
+      - `findings[]`: ids `F1`, `F2`, ... Each needs a `severity`, a `kind`, a
+        `statement`, an `evidence_ref` naming the paragraph, equation, figure,
+        or table it is about, and a `suggestion`. The suggestion is not
+        optional politeness: a finding without a concrete improvement path is a
+        complaint, and the authors cannot act on it.
+
+      Report what is actually there. If the section is sound, say so with few
+      findings rather than manufacturing objections to look thorough.
+
+      Transition to `completed` when your findings are written.
+    outputs:
+      - name: findings
+        path: reviews/sections/{task_id}.json
+        description: Findings for one section from the {{ p.label }} stance
+{%- endfor %}
+
+  merge-sections:
+    description: Merge every per-section finding into one artifact.
+    target: {{merge_target}}
+    inputs:
+      - name: paper
+        path: inputs/paper.json
+    personality: |
+      You are assembling findings, not adjudicating them. Copy each reviewer's
+      findings faithfully; do not merge, re-score, or soften them.
+    instructions: |
+      Merge the section reviews for Task {task_id}: {task_title}.
+
+      Read every JSON file under `reviews/sections/` — one per (section,
+      personality) pair.
+
+      Write `{output.reviews.path}` conforming to
+      `schemas/section-reviews.schema.json`:
+
+      - `artifact`: `section-reviews`, `schema_version`: `1.0`,
+        `generated_by`: `section-review`
+      - `paper_id`: `{{paper_id}}`
+      - `reviews[]`: every per-section object, copied faithfully.
+
+      Renumber `findings[].id` only if two findings within the *same* review
+      object collide. Do not deduplicate across reviews: two personalities
+      independently finding the same problem is evidence, and
+      `pc-member-review` needs to see both to weigh it.
+
+      If a task's file is missing because it failed, include what exists and
+      record the gap in this task's result file rather than inventing findings.
+
+      Transition to `validate-section-reviews` when the artifact is written.
+    outputs:
+      - name: reviews
+        path: reviews/section-reviews.json
+        description: All per-section findings in one artifact
+
+  validate-section-reviews:
+    description: Check section-reviews.json against its schema. Deterministic — a program, not an agent.
+    program: "python3 scripts/validate_artifact.py --schema-dir schemas --instance reviews/section-reviews.json --expect-artifact section-reviews"
+    program_timeout: 2m
+    visits: {{repair_attempts}}
+    inputs:
+      - name: section-reviews
+        path: reviews/section-reviews.json
+
+  repair-section-reviews:
+    description: The agent fixes the schema violations the validator reported in section-reviews.json.
+    target: {{repair_target}}
+    visits: {{repair_attempts}}
+    inputs:
+      - name: section-reviews
+        path: reviews/section-reviews.json
+    personality: |
+      You are correcting a structured artifact that failed its schema contract.
+      Fix the artifact to match the schema. Never weaken the schema, and never
+      invent content to satisfy a required field — a fabricated value passes
+      validation and then misleads every template downstream.
+    instructions: |
+      Repair pass {visit_count} of {visits} for Task {task_id}: {task_title}.
+
+      `{input.section-reviews.path}` failed validation against
+      `schemas/section-reviews.schema.json`. The validator wrote every problem, each
+      with its JSON path, into this task's result file. Read it, read the
+      schema, and fix each one.
+
+      The schemas are closed (`additionalProperties: false`), so an unexpected
+      property must be removed rather than renamed. Ids constrained by a
+      pattern must match it exactly.
+
+      Transition to `validate-section-reviews` when the artifact is corrected.
+
+  section-reviews-failed:
+    description: Human gate — section-reviews.json still fails its schema after every repair attempt.
+    gating: true
+    final: true
+    inputs:
+      - name: section-reviews
+        path: reviews/section-reviews.json
+    instructions: |
+      Section reviews could not be made schema-valid for Task {task_id} within
+      {{repair_attempts}} repair attempts.
+
+      Read this task's result file for the outstanding violations, then fix
+      `reviews/section-reviews.json` by hand and re-check it:
+
+        python3 scripts/validate_artifact.py --schema-dir schemas \
+          --instance reviews/section-reviews.json --expect-artifact section-reviews
+
+      Nothing downstream should consume this artifact until it validates.
+
+  completed:
+    description: The step is done.
+    final: true
+    instructions: |
+      No further action is required.
+
+  cancelled:
+    description: The section review was cancelled.
+    final: true
+    instructions: |
+      Stop work and leave existing artifacts unchanged.
+
+transitions:
+  - from: import-inputs
+    to: plan-sections
+    description: Every upstream artifact conforms to its schema.
+    exit_code: 0
+
+  - from: import-inputs
+    to: inputs-rejected
+    description: An upstream artifact is missing, wrong, or malformed.
+    exit_code: nonzero
+
+  - from: plan-sections
+    to: completed
+    description: Every section-review task and the merge task were appended.
+{% for p in personalities %}
+  - from: review-section-{{ p.id }}
+    to: completed
+    description: The {{ p.label }} wrote findings for its section.
+{% endfor %}
+  - from: merge-sections
+    to: validate-section-reviews
+    description: The merged artifact is written; check the contract.
+
+  - from: validate-section-reviews
+    to: completed
+    description: The artifact conforms to its schema.
+    exit_code: 0
+
+  - from: validate-section-reviews
+    to: repair-section-reviews
+    description: The artifact violates its schema and repair attempts remain.
+    exit_code: nonzero
+    condition: visitCount < visits
+
+  - from: validate-section-reviews
+    to: section-reviews-failed
+    description: The artifact still violates its schema after every repair attempt.
+    exit_code: nonzero
+    condition: visitCount >= visits
+
+  - from: repair-section-reviews
+    to: validate-section-reviews
+    description: The agent corrected the artifact; re-check it.
+
+  - from: "*"
+    to: cancelled
+    description: Cancel the section review from any non-final state.
+
+profiles:
+  workspace:
+    initial: completed
+    allowed:
+      - completed
+
+  section-task:
+    initial: import-inputs
+    allowed:
+      - import-inputs
+      - inputs-rejected
+      - plan-sections
+{%- for p in personalities %}
+      - review-section-{{ p.id }}
+{%- endfor %}
+      - merge-sections
+      - validate-section-reviews
+      - repair-section-reviews
+      - section-reviews-failed
+      - completed
+      - cancelled
+
+node_policy:
+  root: workspace
+  default: section-task
+  by_type:
+    task: section-task

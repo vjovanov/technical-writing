@@ -1,0 +1,474 @@
+# State machine diagram
+# ---------------------
+#
+# Legend: [final] [gate] = gating (only a human transitions out)
+#         [program] = deterministic command, routes on exit code
+#
+#   import-inputs [program] ── nonzero ──> inputs-rejected [gate, final]
+#      |
+#      | exit 0  (every required artifact conforms to its schema)
+#      v
+#   aggregate-points ({{aggregator_target}})       writes an internal draft
+#      |
+#      v
+#   verify-points ({{verifier_target}})            writes review-points.json
+#      |
+#      v
+#   validate-review-points [program] ── nonzero, visits exhausted ──> review-points-failed [gate, final]
+#      |         \__ nonzero, visits remain __> repair-review-points --> validate-review-points
+#      | exit 0
+#      v
+#   points-review [gate]        human curates; human_action overrides the verifier
+#      |
+#      v
+#   render-report ({{aggregator_target}}, visits: {{render_passes}})
+#      |
+#      v
+#   final-signoff [gate, visits: {{render_passes}}]
+#      |--> completed [final]                        (human approves)
+#      +--> render-report                            (human requests a revision,
+#                                                     visitCount < visits)
+#
+#   any non-final state --> cancelled [final]
+#
+# The verifier runs on a different target from the aggregator by default. A
+# model checking points it wrote itself is not an independent check, and the
+# whole purpose of the verify stage is to kill plausible-but-wrong findings
+# before a human spends attention on them.
+#
+# Per-task path:
+#   review: import-inputs -> aggregate-points -> verify-points
+#           -> validate-review-points [-> repair-review-points -> validate-review-points]
+#           -> points-review -> render-report -> final-signoff
+#           [-> render-report -> final-signoff]* -> completed
+
+name: pc-member-review
+version: 1.0.0
+
+states:
+  import-inputs:
+    description: Copy every upstream artifact into this workspace, rejecting anything that does not meet its contract.
+    program: >-
+      python3 scripts/import_artifact.py --schema-dir schemas
+      --source {{paper}} --dest inputs/paper.json --expect-artifact paper &&
+      python3 scripts/import_artifact.py --schema-dir schemas
+      --source {{venue}} --dest inputs/venue.json --expect-artifact venue &&
+      python3 scripts/import_artifact.py --schema-dir schemas
+      --source {{overall_reviews}} --dest inputs/overall-reviews.json
+      --expect-artifact overall-reviews &&
+      python3 scripts/import_artifact.py --schema-dir schemas
+      --source {{section_reviews}} --dest inputs/section-reviews.json
+      --expect-artifact section-reviews
+      {%- if related_work %} &&
+      python3 scripts/import_artifact.py --schema-dir schemas --optional
+      --source {{related_work}} --dest inputs/related-work.json
+      --expect-artifact related-work
+      {%- endif %}
+      {%- if pc_citations %} &&
+      python3 scripts/import_artifact.py --schema-dir schemas --optional
+      --source {{pc_citations}} --dest inputs/pc-citations.json
+      --expect-artifact pc-citations
+      {%- endif %}
+    program_timeout: 5m
+    outputs:
+      - name: paper
+        path: inputs/paper.json
+        description: paper.json imported from the paper-ingest workspace
+      - name: venue
+        path: inputs/venue.json
+        description: venue.json imported from the venue-intake workspace
+      - name: overall
+        path: inputs/overall-reviews.json
+        description: overall-reviews.json imported from the overall-review workspace
+      - name: sections
+        path: inputs/section-reviews.json
+        description: section-reviews.json imported from the section-review workspace
+
+  inputs-rejected:
+    description: Human gate — an upstream artifact is missing, is the wrong artifact, or fails its schema.
+    gating: true
+    final: true
+    instructions: |
+      An input to Task {task_id} did not meet its contract. This task's result
+      file names the file and the exact problem.
+
+      Required inputs:
+
+      - `{{paper}}` — a `paper` artifact from `paper-ingest`
+      - `{{venue}}` — a `venue` artifact from `venue-intake`
+      - `{{overall_reviews}}` — an `overall-reviews` artifact from `overall-review`
+      - `{{section_reviews}}` — a `section-reviews` artifact from `section-review`
+
+      The usual cause is that an upstream template has not finished, or stopped
+      on its own validation gate. Check the upstream workspace, fix the source,
+      then re-run this task from `import-inputs`.
+
+  aggregate-points:
+    description: Merge every review into deduplicated, addressable points.
+    target: {{aggregator_target}}
+    inputs:
+      - name: paper
+        path: inputs/paper.json
+      - name: overall
+        path: inputs/overall-reviews.json
+      - name: sections
+        path: inputs/section-reviews.json
+    personality: |
+      You are consolidating several independent reviews into one list a human
+      can act on. Preserve what the reviewers actually said. Your job is to
+      remove duplication and impose structure, not to adjudicate — a point you
+      personally find unconvincing still goes on the list, because the verifier
+      and the human decide what survives, not you.
+    instructions: |
+      Aggregate review points for Task {task_id}: {task_title}.
+
+      Read `{input.overall.path}` (whole-paper reviews, one per personality) and
+      `{input.sections.path}` (per-section findings), with `{input.paper.path}`
+      for section ids and claim ids.
+
+      Write `{output.draft.path}`, a JSON object with a `points[]` array. Each
+      point:
+
+      - `id`: `P-001`, `P-002`, ... in descending order of importance.
+      - `statement`: the point in one sentence, as a reviewer would put it to
+        the authors.
+      - `kind`: `strength`, `weakness`, `question`, or `suggestion`.
+      - `severity`: `major`, `minor`, or `suggestion`.
+      - `section_id`: where it applies, when it is section-specific.
+      - `sources[]`: every review that raised it, each with `origin`
+        (`overall-review` or `section-review`), `personality_id`, and
+        `section_id` where relevant.
+
+      Merge two findings into one point only when they are the same objection.
+      "No variance reported" and "benchmarks may be noisy" are the same point;
+      "no variance reported" and "wrong baseline" are not. When you merge,
+      list every source — a point three independent reviewers raised is
+      stronger evidence than one raised once, and the source list is how that
+      shows up later.
+
+      Do not drop a point because only one reviewer raised it, and do not
+      invent a point no reviewer raised.
+
+      Transition to `verify-points` when the draft is written.
+    outputs:
+      - name: draft
+        path: review/points-draft.json
+        description: Deduplicated points, not yet verified
+
+  verify-points:
+    description: Independently check every point against the paper, on a different target from the aggregator.
+    target: {{verifier_target}}
+    inputs:
+      - name: draft
+        path: review/points-draft.json
+      - name: paper
+        path: inputs/paper.json
+    personality: |
+      You are an adversarial verifier, and you did not write these points. Your
+      job is to kill the ones that do not survive contact with the paper. A
+      reviewer claiming something is missing when it is on page 7 wastes the
+      authors' rebuttal and embarrasses the reviewer — catching that is worth
+      more than agreeing with a plausible-sounding list.
+    instructions: |
+      Verify review points for Task {task_id}: {task_title}.
+
+      Read `{input.draft.path}` and check every point against the paper itself
+      — `{input.paper.path}` and the `full_text_path` it names. Do not take a
+      point on trust because several reviewers made it; reviewers repeat each
+      other's mistakes.
+
+      For each point assign a `verdict`:
+
+      - `confirmed` — the paper is as the point describes. Record the concrete
+        `evidence[]` you checked.
+      - `weakened` — partly right. Write the corrected claim in
+        `verified_statement` and say what was wrong in `verification_note`.
+        Example: "does not cite X" when the paper cites X but never compares
+        against it — the real point is the missing comparison.
+      - `rejected` — wrong. The paper does contain the thing said to be
+        missing, or the claimed error is not an error. Say where it is in
+        `verification_note`. Rejected points never reach the report.
+
+      Then write `{output.points.path}` conforming to
+      `schemas/review-points.schema.json`: every point from the draft, now with
+      its verdict, `artifact` `review-points`, `schema_version` `1.0`,
+      `generated_by` `pc-member-review`, and `paper_id` `{{paper_id}}`. Leave
+      `human_action` unset — that is the human's field at the next gate.
+
+      Be willing to reject. A verify stage that confirms everything has done
+      nothing.
+
+      Transition to `validate-review-points` when the artifact is written.
+    outputs:
+      - name: points
+        path: review/review-points.json
+        description: Every point with an independent verdict
+  validate-review-points:
+    description: Check review-points.json against its schema. Deterministic — a program, not an agent.
+    program: "python3 scripts/validate_artifact.py --schema-dir schemas --instance review/review-points.json --expect-artifact review-points"
+    program_timeout: 2m
+    visits: {{repair_attempts}}
+    inputs:
+      - name: review-points
+        path: review/review-points.json
+
+  repair-review-points:
+    description: The agent fixes the schema violations the validator reported in review-points.json.
+    target: {{repair_target}}
+    visits: {{repair_attempts}}
+    inputs:
+      - name: review-points
+        path: review/review-points.json
+    personality: |
+      You are correcting a structured artifact that failed its schema contract.
+      Fix the artifact to match the schema. Never weaken the schema, and never
+      invent content to satisfy a required field — a fabricated value passes
+      validation and then misleads every template downstream.
+    instructions: |
+      Repair pass {visit_count} of {visits} for Task {task_id}: {task_title}.
+
+      `{input.review-points.path}` failed validation against
+      `schemas/review-points.schema.json`. The validator wrote every problem, each
+      with its JSON path, into this task's result file. Read it, read the
+      schema, and fix each one.
+
+      The schemas are closed (`additionalProperties: false`), so an unexpected
+      property must be removed rather than renamed. Ids constrained by a
+      pattern must match it exactly.
+
+      Transition to `validate-review-points` when the artifact is corrected.
+
+  review-points-failed:
+    description: Human gate — review-points.json still fails its schema after every repair attempt.
+    gating: true
+    final: true
+    inputs:
+      - name: review-points
+        path: review/review-points.json
+    instructions: |
+      Review points could not be made schema-valid for Task {task_id} within
+      {{repair_attempts}} repair attempts.
+
+      Read this task's result file for the outstanding violations, then fix
+      `review/review-points.json` by hand and re-check it:
+
+        python3 scripts/validate_artifact.py --schema-dir schemas \
+          --instance review/review-points.json --expect-artifact review-points
+
+      Nothing downstream should consume this artifact until it validates.
+
+  points-review:
+    description: Human gate — curate the verified points before the review is written.
+    gating: true
+    inputs:
+      - name: points
+        path: review/review-points.json
+    instructions: |
+      Human review point for Task {task_id}: {task_title}.
+
+      Open `{input.points.path}`. Every point carries a `verdict` from an
+      independent verifier that did not write it.
+
+      Set `human_action` on each point:
+
+      - `keep` — goes into the review.
+      - `drop` — does not, whatever the verifier said.
+      - `edit` — goes in, with your wording; edit `statement` directly.
+
+      Your decision overrides the verifier in both directions: a `rejected`
+      point you mark `keep` goes in, a `confirmed` point you mark `drop` does
+      not. A point with no `human_action` is treated as `keep` if its verdict is
+      `confirmed` or `weakened`, and as `drop` if `rejected`.
+
+      Worth checking before you move on: whether anything important is missing
+      entirely. The pipeline can only consolidate what the reviewers found — if
+      your own reading turned up something none of them raised, add it as a new
+      point now.
+
+      Do not transition out of this state autonomously. A human transitions to
+      `render-report` to write the review, or to `cancelled` to stop.
+
+  render-report:
+    description: Fill in the venue's review form from the curated points.
+    target: {{aggregator_target}}
+    visits: {{render_passes}}
+    inputs:
+      - name: points
+        path: review/review-points.json
+      - name: venue
+        path: inputs/venue.json
+      - name: overall
+        path: inputs/overall-reviews.json
+      - name: feedback
+        path: review/human-feedback.md
+        required: false
+        description: What the human asked to change, written at the final gate on a send-back
+    personality: |
+      You are drafting a review that a named human will submit under their own
+      name. Write what a good reviewer writes: specific, actionable, and fair,
+      addressed to the authors. No hedging padding, no praise sandwich, no
+      restating the paper back at them at length.
+    instructions: |
+      Render the review for Task {task_id}: {task_title} — pass {visit_count} of {visits}.
+
+      Read `{input.points.path}` and use exactly the points that survive
+      curation: `human_action` `keep` or `edit`, or no `human_action` with a
+      verdict of `confirmed` or `weakened`. Never use a point that is `drop`ped
+      or `rejected`. For a `weakened` point use its `verified_statement`, not
+      the original.
+
+      Read `{input.venue.path}` for `review_form.fields[]` — the fields this
+      venue actually asks for.
+
+      {if input.feedback.exists}
+      A previous pass was sent back. Read `{input.feedback.path}` and address
+      every point in it before anything else.
+      {endif}
+
+      Write two files.
+
+      1. `{output.submission.path}` — the file to paste into the review system.
+         If `venue/review-form.txt` was captured verbatim (see
+         `review_form.verbatim_path`), reproduce it byte-for-byte and fill only
+         the response areas; its markers are parsed by the submission system and
+         an edit corrupts it. Otherwise write one clearly labelled section per
+         field in `review_form.fields[]`.
+
+         Mark every score `[SUGGESTED]`. The human sets the real numbers.
+
+      2. `{output.report.path}` — the long form, same content plus a `[P-xxx]`
+         marker after each point so every sentence traces back to a verified
+         point.
+
+      Transition to `final-signoff` when both files are written.
+    outputs:
+      - name: submission
+        path: review/submission-{{paper_id}}.txt
+        description: Submission-ready review, scores marked [SUGGESTED]
+      - name: report
+        path: review/final-review-{{paper_id}}.md
+        description: Long form with [P-xxx] traceability
+
+  final-signoff:
+    description: Human gate — approve the outward-facing review or send it back.
+    gating: true
+    visits: {{render_passes}}
+    inputs:
+      - name: submission
+        path: review/submission-{{paper_id}}.txt
+    instructions: |
+      Final sign-off for Task {task_id}: {task_title}.
+
+      Read `{input.submission.path}`. It goes out under your name.
+
+      - Replace every `[SUGGESTED]` score with your own. The pipeline does not
+        get to score a paper on your behalf.
+      - Check that each criticism is one you are prepared to defend in a PC
+        meeting, and that the tone is one you would want on your own paper.
+
+      To approve: transition to `completed`.
+
+      To send it back: write what needs to change to
+      `review/human-feedback.md`, then transition to `render-report`. That is
+      available {{render_passes}} times in total.
+
+  completed:
+    description: The review is approved and ready to submit.
+    final: true
+    instructions: |
+      No further action is required. Submit `review/submission-{{paper_id}}.txt`.
+
+  cancelled:
+    description: The review was cancelled.
+    final: true
+    instructions: |
+      Stop work and leave existing artifacts unchanged.
+
+transitions:
+  - from: import-inputs
+    to: aggregate-points
+    description: Every required artifact conforms to its schema.
+    exit_code: 0
+
+  - from: import-inputs
+    to: inputs-rejected
+    description: A required artifact is missing, wrong, or malformed.
+    exit_code: nonzero
+
+  - from: aggregate-points
+    to: verify-points
+    description: The point draft is written; verify it independently.
+
+  - from: verify-points
+    to: validate-review-points
+    description: Every point has a verdict; check the contract.
+
+  - from: validate-review-points
+    to: points-review
+    description: The verified points conform to their schema; hand them to the human.
+    exit_code: 0
+
+  - from: validate-review-points
+    to: repair-review-points
+    description: The artifact violates its schema and repair attempts remain.
+    exit_code: nonzero
+    condition: visitCount < visits
+
+  - from: validate-review-points
+    to: review-points-failed
+    description: The artifact still violates its schema after every repair attempt.
+    exit_code: nonzero
+    condition: visitCount >= visits
+
+  - from: repair-review-points
+    to: validate-review-points
+    description: The agent corrected the artifact; re-check it.
+
+  - from: points-review
+    to: render-report
+    description: The human curated the point list; write the review.
+
+  - from: render-report
+    to: final-signoff
+    description: The review is written; wait for human sign-off.
+
+  - from: final-signoff
+    to: completed
+    description: The human approved the submission-ready review.
+
+  - from: final-signoff
+    to: render-report
+    description: The human requested a revision via review/human-feedback.md.
+    condition: visitCount < visits
+
+  - from: "*"
+    to: cancelled
+    description: Cancel the review from any non-final state.
+
+profiles:
+  workspace:
+    initial: completed
+    allowed:
+      - completed
+
+  review-task:
+    initial: import-inputs
+    allowed:
+      - import-inputs
+      - inputs-rejected
+      - aggregate-points
+      - verify-points
+      - validate-review-points
+      - repair-review-points
+      - review-points-failed
+      - points-review
+      - render-report
+      - final-signoff
+      - completed
+      - cancelled
+
+node_policy:
+  root: workspace
+  default: review-task
+  by_type:
+    task: review-task

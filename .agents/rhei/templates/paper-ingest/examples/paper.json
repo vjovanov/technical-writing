@@ -1,0 +1,34 @@
+{
+  "artifact": "paper",
+  "schema_version": "1.0",
+  "generated_by": "paper-ingest",
+  "paper_id": "submission-42",
+  "source_kind": "pdf",
+  "source_path": "inputs/submission-42.pdf",
+  "title": "Profiling Beyond IR: Method-Signature Embeddings for Static Profiling",
+  "anonymous": true,
+  "authors": [{ "name": "Anonymous Author(s)" }],
+  "abstract": "Lightweight identifier name embeddings can improve static profiling in production AOT compilers.",
+  "page_count": 16,
+  "full_text_path": "paper/full-text.md",
+  "pages_dir": "paper/pages",
+  "sections": [
+    { "id": "S1", "title": "Introduction", "kind": "core", "level": 1, "pages": { "from": 1, "to": 2 } },
+    { "id": "S2", "title": "System Description", "kind": "core", "level": 1, "pages": { "from": 3, "to": 6 } },
+    { "id": "S3", "title": "Evaluation", "kind": "core", "level": 1, "pages": { "from": 7, "to": 12 } },
+    { "id": "S4", "title": "References", "kind": "boilerplate", "level": 1, "pages": { "from": 13, "to": 16 } }
+  ],
+  "contributions": [
+    { "id": "C1", "statement": "A method-signature embedding usable inside a production AOT compiler", "section_id": "S1" },
+    { "id": "C2", "statement": "An evaluation across three benchmark suites", "section_id": "S3" }
+  ],
+  "claims": [
+    { "id": "K1", "statement": "Runtime improves by 2.31% on Renaissance", "section_id": "S3", "evidence_ref": "Table 2" },
+    { "id": "K2", "statement": "The embedding table costs 2.77 MB", "section_id": "S3", "evidence_ref": "Section 5.2" }
+  ],
+  "topics": [
+    { "term": "ahead-of-time compilation", "weight": 0.9 },
+    { "term": "profile-guided optimization", "weight": 0.85 },
+    { "term": "machine learning for compilers", "weight": 0.8 }
+  ]
+}

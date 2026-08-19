@@ -1,0 +1,262 @@
+# State machine diagram
+# ---------------------
+#
+# Legend: [final] [gate] = gating (only a human transitions out)
+#         [program] = deterministic command, routes on exit code
+#
+#   import-inputs [program] ── nonzero ──> inputs-rejected [gate, final]
+#      |
+#      | exit 0  (paper.json conforms to its schema)
+#      v
+#   search-literature ({{search_target}})
+#      |
+#      v
+#   validate-related-work [program] ── exit 0 ──────────────> completed [final]
+#      |         \
+#      |          \── nonzero, visitCount >= visits --> related-work-failed [gate, final]
+#      |
+#      +-- nonzero, visitCount < visits
+#             |
+#             v
+#          repair-related-work ({{repair_target}}, visits: {{repair_attempts}})
+#             |
+#             +--> validate-related-work
+#
+#   any non-final state --> cancelled [final]
+#
+# Per-task path:
+#   search: import-inputs -> search-literature -> validate-related-work
+#           [-> repair-related-work -> validate-related-work] -> completed | related-work-failed
+
+name: related-work
+version: 1.0.0
+
+states:
+  import-inputs:
+    description: Copy the upstream paper artifact into this workspace, rejecting it if it does not meet its contract.
+    program: >-
+      python3 scripts/import_artifact.py --schema-dir schemas
+      --source {{paper}} --dest inputs/paper.json --expect-artifact paper
+    program_timeout: 2m
+    outputs:
+      - name: paper
+        path: inputs/paper.json
+        description: paper.json imported from the paper-ingest workspace
+
+  inputs-rejected:
+    description: Human gate — the upstream paper artifact is missing, is the wrong artifact, or fails its schema.
+    gating: true
+    final: true
+    instructions: |
+      The input to Task {task_id} did not meet its contract. This task's result
+      file names the exact problem.
+
+      Expected: `{{paper}}` — a `paper` artifact from a `paper-ingest`
+      workspace. Fix the source, then re-run this task from `import-inputs`.
+
+  search-literature:
+    description: Sweep the literature for prior, competing, and seminal work bearing on the submission.
+    target: {{search_target}}
+    inputs:
+      - name: paper
+        path: inputs/paper.json
+    personality: |
+      You are building the evidence base for judging a paper's novelty. Search
+      broadly before you narrow: the most valuable find is competing work the
+      authors did not cite, and you will not find it by searching only the
+      terms they chose. Never invent a citation — every entry must be a paper
+      you actually located.
+    instructions: |
+      Sweep the literature for Task {task_id}: {task_title}.
+
+      Read `{input.paper.path}` — `title`, `topics[]`, `contributions[]`, and
+      `claims[]` tell you what the paper asserts is new.
+
+      1. Search from several angles, not one. At minimum:
+
+         - The paper's own terms, from `topics[]`.
+         - The *problem* stated independently of the paper's solution — other
+           people solve it under other names.
+         - The technique applied in adjacent domains.
+         - Recent work (last two years) that may postdate the paper's own
+           related-work section.
+         - The authors' own earlier papers, for self-overlap. This matters
+           even for an anonymized submission: substantial overlap with an
+           identifiable prior paper is a real reviewing concern.
+
+         Record what you searched in `queries[]` so the sweep can be
+         reproduced or widened later.
+
+      2. Keep at most {{max_papers}} entries, ranked by how much they bear on
+         the submission's claims. Prefer a short, sharp list over an
+         exhaustive one — an index nobody reads has no effect on the review.
+      {% if download_pdfs %}
+
+      3. Download openly accessible PDFs into `related/pdfs/` and record the
+         local path in `pdf_path`. Do not attempt to bypass paywalls; leave
+         `pdf_path` out when the PDF is not openly available.
+      {% else %}
+
+      3. PDF downloading is disabled for this instantiation. Record `url` and
+         `doi` so the papers can be retrieved later; leave `pdf_path` out.
+      {% endif %}
+
+      4. For each entry set `relation` honestly:
+
+         - `closest-prior` — the work this submission most directly builds on
+           or must outperform.
+         - `competing` — a different approach to the same problem, especially
+           one reaching the opposite conclusion.
+         - `seminal` — the origin of an idea the submission uses.
+         - `recent` — concurrent or very recent work.
+         - `self-overlap` — the authors' own closely-related paper.
+         - `background` — context a reader needs but which does not test the
+           claims.
+
+         Set `cited_by_paper` by checking the submission's own text. A
+         `closest-prior` or `competing` entry with `cited_by_paper: false` is
+         the most important thing this sweep produces — call it out in
+         `notes`.
+
+      5. Write `{output.related.path}` conforming to
+         `schemas/related-work.schema.json`. `paper_id` must be `{{paper_id}}`
+         and ids must be `RW1`, `RW2`, ... in rank order.
+
+      `examples/related-work.json` is a well-formed instance to model.
+
+      Transition to `validate-related-work` when the artifact is written.
+    outputs:
+      - name: related
+        path: related/related-work.json
+        description: Ranked literature index with relation and citation status
+
+  validate-related-work:
+    description: Check related-work.json against its schema. Deterministic — a program, not an agent.
+    program: "python3 scripts/validate_artifact.py --schema-dir schemas --instance related/related-work.json --expect-artifact related-work"
+    program_timeout: 2m
+    visits: {{repair_attempts}}
+    inputs:
+      - name: related-work
+        path: related/related-work.json
+
+  repair-related-work:
+    description: The agent fixes the schema violations the validator reported in related-work.json.
+    target: {{repair_target}}
+    visits: {{repair_attempts}}
+    inputs:
+      - name: related-work
+        path: related/related-work.json
+    personality: |
+      You are correcting a structured artifact that failed its schema contract.
+      Fix the artifact to match the schema. Never weaken the schema, and never
+      invent content to satisfy a required field — a fabricated value passes
+      validation and then misleads every template downstream.
+    instructions: |
+      Repair pass {visit_count} of {visits} for Task {task_id}: {task_title}.
+
+      `{input.related-work.path}` failed validation against
+      `schemas/related-work.schema.json`. The validator wrote every problem, each
+      with its JSON path, into this task's result file. Read it, read the
+      schema, and fix each one.
+
+      The schemas are closed (`additionalProperties: false`), so an unexpected
+      property must be removed rather than renamed. Ids constrained by a
+      pattern must match it exactly.
+
+      Transition to `validate-related-work` when the artifact is corrected.
+
+  related-work-failed:
+    description: Human gate — related-work.json still fails its schema after every repair attempt.
+    gating: true
+    final: true
+    inputs:
+      - name: related-work
+        path: related/related-work.json
+    instructions: |
+      Related work could not be made schema-valid for Task {task_id} within
+      {{repair_attempts}} repair attempts.
+
+      Read this task's result file for the outstanding violations, then fix
+      `related/related-work.json` by hand and re-check it:
+
+        python3 scripts/validate_artifact.py --schema-dir schemas \
+          --instance related/related-work.json --expect-artifact related-work
+
+      Nothing downstream should consume this artifact until it validates.
+
+  completed:
+    description: The literature index is written and conforms to the schema.
+    final: true
+    instructions: |
+      No further action is required. `related/related-work.json` is ready to be
+      passed as the `related_work` input of the review templates.
+
+  cancelled:
+    description: The literature sweep was cancelled.
+    final: true
+    instructions: |
+      Stop work and leave existing artifacts unchanged.
+
+transitions:
+  - from: import-inputs
+    to: search-literature
+    description: The paper artifact conforms to its schema.
+    exit_code: 0
+
+  - from: import-inputs
+    to: inputs-rejected
+    description: The paper artifact is missing, wrong, or malformed.
+    exit_code: nonzero
+
+  - from: search-literature
+    to: validate-related-work
+    description: The index is written; check the contract.
+
+  - from: validate-related-work
+    to: completed
+    description: The artifact conforms to its schema.
+    exit_code: 0
+
+  - from: validate-related-work
+    to: repair-related-work
+    description: The artifact violates its schema and repair attempts remain.
+    exit_code: nonzero
+    condition: visitCount < visits
+
+  - from: validate-related-work
+    to: related-work-failed
+    description: The artifact still violates its schema after every repair attempt.
+    exit_code: nonzero
+    condition: visitCount >= visits
+
+  - from: repair-related-work
+    to: validate-related-work
+    description: The agent corrected the artifact; re-check it.
+
+  - from: "*"
+    to: cancelled
+    description: Cancel the literature sweep from any non-final state.
+
+profiles:
+  workspace:
+    initial: completed
+    allowed:
+      - completed
+
+  search-task:
+    initial: import-inputs
+    allowed:
+      - import-inputs
+      - inputs-rejected
+      - search-literature
+      - validate-related-work
+      - repair-related-work
+      - related-work-failed
+      - completed
+      - cancelled
+
+node_policy:
+  root: workspace
+  default: search-task
+  by_type:
+    task: search-task

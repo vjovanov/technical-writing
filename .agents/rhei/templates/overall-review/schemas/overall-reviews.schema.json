@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "paper-pipeline/overall-reviews/1.0",
+  "title": "Overall reviews",
+  "description": "One whole-paper review per configured reviewer personality. Produced by overall-review.",
+  "type": "object",
+  "required": ["artifact", "schema_version", "generated_by", "paper_id", "reviews"],
+  "additionalProperties": false,
+  "properties": {
+    "artifact": { "const": "overall-reviews" },
+    "schema_version": { "const": "1.0" },
+    "generated_by": { "type": "string", "minLength": 1 },
+    "paper_id": { "type": "string", "minLength": 1 },
+    "venue_name": { "type": "string" },
+    "reviews": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["personality_id", "personality_label", "summary", "recommendation", "confidence"],
+        "additionalProperties": false,
+        "properties": {
+          "personality_id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+          "personality_label": { "type": "string", "minLength": 1 },
+          "target": { "type": "string", "description": "Execution target that produced this review" },
+          "summary": { "type": "string", "minLength": 1, "description": "The paper in the reviewer's words — problem, approach, claimed contribution, significance" },
+          "strengths": { "type": "array", "items": { "$ref": "#/$defs/finding" } },
+          "weaknesses": { "type": "array", "items": { "$ref": "#/$defs/finding" } },
+          "questions": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+          "scores": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["field_id", "value"],
+              "additionalProperties": false,
+              "properties": {
+                "field_id": { "type": "string", "minLength": 1, "description": "References venue.review_form.fields[].id" },
+                "value": { "type": ["number", "string"] },
+                "rationale": { "type": "string" }
+              }
+            }
+          },
+          "recommendation": {
+            "enum": ["accept", "weak-accept", "borderline", "weak-reject", "reject"]
+          },
+          "confidence": { "enum": ["low", "medium", "high"] }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "finding": {
+      "type": "object",
+      "required": ["statement"],
+      "additionalProperties": false,
+      "properties": {
+        "statement": { "type": "string", "minLength": 1 },
+        "severity": { "enum": ["major", "minor", "suggestion"] },
+        "evidence_ref": { "type": "string", "description": "Section, figure, table, or page grounding the finding" },
+        "claim_id": { "type": "string", "description": "References paper.claims[].id when the finding is about a specific claim" }
+      }
+    }
+  }
+}

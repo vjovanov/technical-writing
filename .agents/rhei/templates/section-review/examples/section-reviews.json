@@ -1,0 +1,29 @@
+{
+  "artifact": "section-reviews",
+  "schema_version": "1.0",
+  "generated_by": "section-review",
+  "paper_id": "submission-42",
+  "reviews": [
+    { "section_id": "S2", "section_title": "System Description", "personality_id": "academic",
+      "target": "claude-code[yolo]:anthropic:claude-opus-5",
+      "assessment": "Describes the embedding pipeline and its integration into the compiler. Mostly clear; one definition is load-bearing and imprecise.",
+      "findings": [
+        { "id": "F1", "severity": "major", "kind": "clarity",
+          "statement": "\"Method signature\" is never defined precisely, though the whole approach depends on what it includes.",
+          "evidence_ref": "Section 2.1",
+          "suggestion": "State explicitly whether the signature includes parameter types and the declaring package." },
+        { "id": "F2", "severity": "minor", "kind": "reproducibility",
+          "statement": "The embedding table's training corpus is not identified.",
+          "evidence_ref": "Section 2.1", "suggestion": "Name the corpus and its size." }
+      ] },
+    { "section_id": "S3", "section_title": "Evaluation", "personality_id": "industry-skeptical",
+      "target": "codex[high]:openai:gpt-5.6-sol",
+      "assessment": "Reports gains on three suites without dispersion, which is the weakest part of the paper.",
+      "findings": [
+        { "id": "F3", "severity": "major", "kind": "evidence",
+          "statement": "No variance, confidence interval, or run count accompanies any reported speedup.",
+          "evidence_ref": "Table 2",
+          "suggestion": "Report the number of runs and a dispersion measure for every number in Table 2." }
+      ] }
+  ]
+}

@@ -1,0 +1,26 @@
+{
+  "artifact": "pc-citations",
+  "schema_version": "1.0",
+  "generated_by": "pc-citation-scan",
+  "paper_id": "submission-42",
+  "entries": [
+    { "member_id": "b-member", "name": "B. Member", "band": "high",
+      "papers": [
+        { "title": "Static profile inference for AOT compilers", "year": 2024, "venue": "PLDI",
+          "doi": "10.1145/0000000.0000001",
+          "relevance": "Closest prior work on the same problem; the submission's baseline is a reimplementation of it.",
+          "already_cited": true, "bibtex_key": "member2024static", "citation_priority": "must" },
+        { "title": "Cost models for speculative inlining", "year": 2022, "venue": "CGO",
+          "relevance": "Introduces the cost model the submission's Section 4 implicitly assumes.",
+          "already_cited": false,
+          "suggested_context": "Cite in Section 4 when introducing the inlining threshold.",
+          "citation_priority": "should" }
+      ] },
+    { "member_id": "c-member", "name": "C. Member", "band": "medium",
+      "papers": [
+        { "title": "Learned indexes for runtime systems", "year": 2023, "venue": "ASPLOS",
+          "relevance": "Adjacent framing of learned components in systems; useful for the related-work positioning.",
+          "already_cited": false, "citation_priority": "optional" }
+      ] }
+  ]
+}

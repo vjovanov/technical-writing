@@ -1,0 +1,27 @@
+{
+  "artifact": "related-work",
+  "schema_version": "1.0",
+  "generated_by": "related-work",
+  "paper_id": "submission-42",
+  "queries": [
+    "static profile inference ahead-of-time compilation",
+    "identifier name embeddings compiler optimization",
+    "method hotness prediction machine learning"
+  ],
+  "entries": [
+    { "id": "RW1", "title": "Static profile inference for AOT compilers", "authors": ["B. Member"],
+      "year": 2024, "venue": "PLDI", "doi": "10.1145/0000000.0000001",
+      "pdf_path": "related/pdfs/RW1.pdf", "relation": "closest-prior",
+      "relevance": "Same problem, same deployment constraints; the submission must beat this baseline to claim novelty.",
+      "cited_by_paper": true },
+    { "id": "RW2", "title": "code2vec: Learning distributed representations of code",
+      "authors": ["U. Alon", "M. Zilberstein"], "year": 2019, "venue": "POPL",
+      "relation": "seminal", "relevance": "Origin of the identifier-embedding idea the submission builds on.",
+      "cited_by_paper": true },
+    { "id": "RW3", "title": "Lightweight heuristics beat learned models for inlining", "year": 2025,
+      "venue": "CC", "relation": "competing",
+      "relevance": "Argues the opposite conclusion under similar constraints; the submission does not compare against it.",
+      "cited_by_paper": false,
+      "notes": "Strong candidate for a missing-citation point in the review." }
+  ]
+}

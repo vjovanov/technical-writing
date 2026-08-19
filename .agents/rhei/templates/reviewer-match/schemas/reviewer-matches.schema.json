@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "paper-pipeline/reviewer-matches/1.0",
+  "title": "Reviewer matches",
+  "description": "Per-PC-member likelihood of being assigned this paper, with the evidence behind each estimate. Produced by reviewer-match.",
+  "type": "object",
+  "required": ["artifact", "schema_version", "generated_by", "paper_id", "venue_name", "matches"],
+  "additionalProperties": false,
+  "properties": {
+    "artifact": { "const": "reviewer-matches" },
+    "schema_version": { "const": "1.0" },
+    "generated_by": { "type": "string", "minLength": 1 },
+    "paper_id": { "type": "string", "minLength": 1 },
+    "venue_name": { "type": "string", "minLength": 1 },
+    "method": { "type": "string", "description": "How likelihood was estimated, so a reader can judge how much to trust it" },
+    "matches": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["member_id", "name", "likelihood", "band", "rationale"],
+        "additionalProperties": false,
+        "properties": {
+          "member_id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$", "description": "References program-committee.members[].id" },
+          "name": { "type": "string", "minLength": 1 },
+          "likelihood": { "type": "number", "minimum": 0, "maximum": 1, "description": "Estimated probability this member reviews the paper" },
+          "band": { "enum": ["high", "medium", "low"], "description": "Coarse bucket; downstream templates filter on this rather than on raw likelihood" },
+          "rationale": { "type": "string", "minLength": 1 },
+          "topic_overlap": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+          "evidence": {
+            "type": "array",
+            "description": "Concrete grounds — their papers, stated interests, prior PC roles",
+            "items": {
+              "type": "object",
+              "required": ["kind", "detail"],
+              "additionalProperties": false,
+              "properties": {
+                "kind": { "enum": ["publication", "stated-interest", "prior-review", "affiliation", "other"] },
+                "detail": { "type": "string", "minLength": 1 },
+                "url": { "type": "string" }
+              }
+            }
+          },
+          "conflict": {
+            "type": "object",
+            "description": "Declared conflict of interest, which makes assignment unlikely regardless of topic fit",
+            "required": ["kind"],
+            "additionalProperties": false,
+            "properties": {
+              "kind": { "enum": ["co-author", "same-institution", "advisor", "funding", "other"] },
+              "detail": { "type": "string" }
+            }
+          }
+        }
+      }
+    }
+  }
+}

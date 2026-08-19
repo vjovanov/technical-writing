@@ -1,0 +1,265 @@
+# State machine diagram
+# ---------------------
+#
+# Legend: [final] [gate] = gating (only a human transitions out)
+#         [program] = deterministic command, routes on exit code
+#
+#   import-inputs [program] ── nonzero ──> inputs-rejected [gate, final]
+#      |
+#      | exit 0  (paper.json and reviewer-matches.json conform to their schemas)
+#      v
+#   scan-citations ({{scan_target}})
+#      |
+#      v
+#   validate-pc-citations [program] ── exit 0 ──────────────> completed [final]
+#      |         \
+#      |          \── nonzero, visitCount >= visits --> pc-citations-failed [gate, final]
+#      |
+#      +-- nonzero, visitCount < visits
+#             |
+#             v
+#          repair-pc-citations ({{repair_target}}, visits: {{repair_attempts}})
+#             |
+#             +--> validate-pc-citations
+#
+#   any non-final state --> cancelled [final]
+#
+# Per-task path:
+#   scan: import-inputs -> scan-citations -> validate-pc-citations
+#         [-> repair-pc-citations -> validate-pc-citations] -> completed | pc-citations-failed
+
+name: pc-citation-scan
+version: 1.0.0
+
+states:
+  import-inputs:
+    description: Copy the upstream artifacts into this workspace, rejecting anything that does not meet its contract.
+    program: >-
+      python3 scripts/import_artifact.py --schema-dir schemas
+      --source {{paper}} --dest inputs/paper.json --expect-artifact paper &&
+      python3 scripts/import_artifact.py --schema-dir schemas
+      --source {{reviewer_matches}} --dest inputs/reviewer-matches.json
+      --expect-artifact reviewer-matches
+    program_timeout: 2m
+    outputs:
+      - name: paper
+        path: inputs/paper.json
+        description: paper.json imported from the paper-ingest workspace
+      - name: matches
+        path: inputs/reviewer-matches.json
+        description: reviewer-matches.json imported from the reviewer-match workspace
+
+  inputs-rejected:
+    description: Human gate — an upstream artifact is missing, is the wrong artifact, or fails its schema.
+    gating: true
+    final: true
+    instructions: |
+      An input to Task {task_id} did not meet its contract. This task's result
+      file names the file and the exact problem.
+
+      Expected inputs:
+
+      - `{{paper}}` — a `paper` artifact from a `paper-ingest` workspace
+      - `{{reviewer_matches}}` — a `reviewer-matches` artifact from a
+        `reviewer-match` workspace
+
+      Fix the source, then re-run this task from `import-inputs`.
+
+  scan-citations:
+    description: Scan each likely reviewer's publication record for work this paper should engage with.
+    target: {{scan_target}}
+    inputs:
+      - name: paper
+        path: inputs/paper.json
+      - name: matches
+        path: inputs/reviewer-matches.json
+    personality: |
+      You are checking a paper's engagement with the literature of the people
+      most likely to judge it. Be accurate about what exists and what is
+      already cited. Never invent a publication — a fabricated "you should cite
+      this" wastes the author's time and destroys trust in the whole scan.
+    instructions: |
+      Scan reviewer citations for Task {task_id}: {task_title}.
+
+      Read `{input.paper.path}` for the paper's topics, contributions, and
+      claims, and `{input.matches.path}` for who is likely to review it.
+
+      1. Select the members to scan: those whose `band` is one of
+         {% for b in bands %}`{{ b }}`{% if not loop.last %}, {% endif %}{% endfor %}.
+         Skip members with a recorded `conflict` — they will not be assigned
+         the paper, so their work is not reconnaissance, it is just literature
+         (and `related-work` covers that ground independently).
+
+      2. For each selected member, find up to {{max_papers_per_member}} of their
+         publications that genuinely bear on this paper. Prefer recent and
+         highly relevant work over a complete bibliography. Use their homepage,
+         DBLP, or the venue's own proceedings.
+
+      3. Decide, for each, whether the paper already cites it.
+      {% if bibliography %}
+         Check `{{bibliography}}` first — a match there is authoritative, and
+         record the entry's key in `bibtex_key`. Fall back to searching
+         `inputs/paper.json`'s `full_text_path` if the bibliography is
+         inconclusive.
+      {% else %}
+         No bibliography was supplied, so judge from the paper's full text
+         (`full_text_path` in `{input.paper.path}`). Where you cannot tell,
+         say so in `relevance` rather than guessing `already_cited`.
+      {% endif %}
+
+      4. For each paper, write an honest `relevance`: what it does that bears
+         on this submission. Then set `citation_priority`:
+
+         - `must` — the submission's contribution cannot be assessed without
+           it: closest prior work, the method being extended, a directly
+           competing result.
+         - `should` — it materially strengthens the positioning.
+         - `optional` — genuinely adjacent; a reviewer would not fault its
+           absence.
+
+         Do not inflate priority to flatter a likely reviewer. A `must` that is
+         really an `optional` is how papers end up with gratuitous citations,
+         which reviewers notice.
+
+      5. Write `{output.citations.path}` conforming to
+         `schemas/pc-citations.schema.json`. `paper_id` must be `{{paper_id}}`,
+         and every `member_id` must exist in `{input.matches.path}`.
+
+      `examples/pc-citations.json` is a well-formed instance to model.
+
+      Transition to `validate-pc-citations` when the artifact is written.
+    outputs:
+      - name: citations
+        path: citations/pc-citations.json
+        description: Per-member relevant work with citation status and priority
+
+  validate-pc-citations:
+    description: Check pc-citations.json against its schema. Deterministic — a program, not an agent.
+    program: "python3 scripts/validate_artifact.py --schema-dir schemas --instance citations/pc-citations.json --expect-artifact pc-citations"
+    program_timeout: 2m
+    visits: {{repair_attempts}}
+    inputs:
+      - name: pc-citations
+        path: citations/pc-citations.json
+
+  repair-pc-citations:
+    description: The agent fixes the schema violations the validator reported in pc-citations.json.
+    target: {{repair_target}}
+    visits: {{repair_attempts}}
+    inputs:
+      - name: pc-citations
+        path: citations/pc-citations.json
+    personality: |
+      You are correcting a structured artifact that failed its schema contract.
+      Fix the artifact to match the schema. Never weaken the schema, and never
+      invent content to satisfy a required field — a fabricated value passes
+      validation and then misleads every template downstream.
+    instructions: |
+      Repair pass {visit_count} of {visits} for Task {task_id}: {task_title}.
+
+      `{input.pc-citations.path}` failed validation against
+      `schemas/pc-citations.schema.json`. The validator wrote every problem, each
+      with its JSON path, into this task's result file. Read it, read the
+      schema, and fix each one.
+
+      The schemas are closed (`additionalProperties: false`), so an unexpected
+      property must be removed rather than renamed. Ids constrained by a
+      pattern must match it exactly.
+
+      Transition to `validate-pc-citations` when the artifact is corrected.
+
+  pc-citations-failed:
+    description: Human gate — pc-citations.json still fails its schema after every repair attempt.
+    gating: true
+    final: true
+    inputs:
+      - name: pc-citations
+        path: citations/pc-citations.json
+    instructions: |
+      PC citations could not be made schema-valid for Task {task_id} within
+      {{repair_attempts}} repair attempts.
+
+      Read this task's result file for the outstanding violations, then fix
+      `citations/pc-citations.json` by hand and re-check it:
+
+        python3 scripts/validate_artifact.py --schema-dir schemas \
+          --instance citations/pc-citations.json --expect-artifact pc-citations
+
+      Nothing downstream should consume this artifact until it validates.
+
+  completed:
+    description: The citation scan is written and conforms to the schema.
+    final: true
+    instructions: |
+      No further action is required. `citations/pc-citations.json` is ready to
+      be passed as the `pc_citations` input of `pc-member-review`.
+
+  cancelled:
+    description: The citation scan was cancelled.
+    final: true
+    instructions: |
+      Stop work and leave existing artifacts unchanged.
+
+transitions:
+  - from: import-inputs
+    to: scan-citations
+    description: Every upstream artifact conforms to its schema.
+    exit_code: 0
+
+  - from: import-inputs
+    to: inputs-rejected
+    description: An upstream artifact is missing, wrong, or malformed.
+    exit_code: nonzero
+
+  - from: scan-citations
+    to: validate-pc-citations
+    description: The scan is written; check the contract.
+
+  - from: validate-pc-citations
+    to: completed
+    description: The artifact conforms to its schema.
+    exit_code: 0
+
+  - from: validate-pc-citations
+    to: repair-pc-citations
+    description: The artifact violates its schema and repair attempts remain.
+    exit_code: nonzero
+    condition: visitCount < visits
+
+  - from: validate-pc-citations
+    to: pc-citations-failed
+    description: The artifact still violates its schema after every repair attempt.
+    exit_code: nonzero
+    condition: visitCount >= visits
+
+  - from: repair-pc-citations
+    to: validate-pc-citations
+    description: The agent corrected the artifact; re-check it.
+
+  - from: "*"
+    to: cancelled
+    description: Cancel the citation scan from any non-final state.
+
+profiles:
+  workspace:
+    initial: completed
+    allowed:
+      - completed
+
+  scan-task:
+    initial: import-inputs
+    allowed:
+      - import-inputs
+      - inputs-rejected
+      - scan-citations
+      - validate-pc-citations
+      - repair-pc-citations
+      - pc-citations-failed
+      - completed
+      - cancelled
+
+node_policy:
+  root: workspace
+  default: scan-task
+  by_type:
+    task: scan-task

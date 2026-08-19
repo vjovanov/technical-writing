@@ -1,0 +1,106 @@
+name: section-review
+version: 1.0.0
+description: Review a paper section by section — one task per core section per personality, spawned at run time from the paper's own section map — into a schema-validated section-reviews.json.
+
+inputs:
+  - name: paper
+    description: paper.json produced by paper-ingest; its sections[] marked `core` decide what gets reviewed
+    type: string
+    default: ../paper-ingest/paper/paper.json
+
+  - name: venue
+    description: venue.json produced by venue-intake
+    type: string
+    default: ../venue-intake/venue/venue.json
+
+  - name: related_work
+    description: related-work.json produced by related-work; optional
+    type: string
+    default: ""
+
+  - name: paper_id
+    description: Stable identifier, matching the one in paper.json
+    type: string
+    default: submission
+
+  - name: personalities
+    description: Reviewer personalities. Every core section is reviewed once per personality, so the task count is (core sections x personalities).
+    type: array
+    items:
+      type: object
+      properties:
+        id:
+          type: string
+          validate: "[a-z][a-z0-9-]*"
+        label:
+          type: string
+        selector:
+          type: string
+          format: execution-target
+        stance:
+          type: string
+    default:
+      - id: academic
+        label: Academic reviewer
+        selector: claude-code[yolo]:anthropic:claude-opus-5
+        stance: >-
+          You are a professor reviewing for a top-tier venue. Within this section, judge
+          technical soundness, whether definitions are precise enough to build on, and
+          whether the claims made here are supported where they are made.
+      - id: industry-skeptical
+        label: Industry-skeptical reviewer
+        selector: codex[high]:openai:gpt-5.6-sol
+        stance: >-
+          You are a performance architect who distrusts unquantified claims. Within this
+          section, hunt for unstated assumptions, missing baselines, and numbers presented
+          without dispersion or methodology.
+
+  - name: coordinator_target
+    description: Agent target that reads the section map and spawns the per-section review tasks
+    type: string
+    format: execution-target
+    default: claude-code[yolo]:anthropic:claude-opus-5
+
+  - name: merge_target
+    description: Agent target that merges the per-section findings into one artifact
+    type: string
+    format: execution-target
+    default: claude-code[yolo]:anthropic:claude-opus-5
+
+  - name: repair_target
+    description: Agent target that repairs schema violations
+    type: string
+    format: execution-target
+    default: claude-code[yolo]:anthropic:claude-opus-5
+
+  - name: repair_attempts
+    description: How many times the agent may repair the artifact before the run stops for a human
+    type: number
+    default: 2
+  - name: agent_timeout
+    description: Per-agent wall-clock timeout, e.g. "30m" or "2h"
+    type: string
+    default: 30m
+
+  - name: agents_json
+    description: >-
+      JSON object declaring the agent programs your selectors refer to, written verbatim
+      into .agents/rhei/settings.json. Any agent named in a selector must be declared here
+      or in your global rhei settings, including the modes used in brackets — an undeclared
+      agent or mode fails instantiation. Supply with --set-file agents_json=<file>. The
+      default declares `codex`; `claude-code` and other built-ins need no declaration.
+    type: string
+    default: |
+      {
+        "codex": {
+          "command": ["codex", "exec"],
+          "model_flag": "--model",
+          "stdin_prompt": true,
+          "mcp_flag": "--mcp",
+          "modes": {
+            "yolo": ["--sandbox", "workspace-write", "--skip-git-repo-check", "-c", "approval_policy=\"on-request\""],
+            "high": ["--sandbox", "workspace-write", "--skip-git-repo-check", "-c", "approval_policy=\"on-request\"", "-c", "model_reasoning_effort=\"high\""],
+            "xhigh": ["--sandbox", "workspace-write", "--skip-git-repo-check", "-c", "approval_policy=\"on-request\"", "-c", "model_reasoning_effort=\"xhigh\""]
+          }
+        }
+      }

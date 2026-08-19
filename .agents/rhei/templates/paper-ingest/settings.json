@@ -1,0 +1,6 @@
+{
+  "defaults": {
+    "agent_timeout": "{{agent_timeout}}"
+  },
+  "agents": {{agents_json}}
+}

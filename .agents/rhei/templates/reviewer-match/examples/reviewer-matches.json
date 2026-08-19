@@ -1,0 +1,24 @@
+{
+  "artifact": "reviewer-matches",
+  "schema_version": "1.0",
+  "generated_by": "reviewer-match",
+  "paper_id": "submission-42",
+  "venue_name": "OOPSLA 2026",
+  "method": "Topic overlap between paper.topics and each member's recent publications, weighted by recency; conflicts detected from author affiliations.",
+  "matches": [
+    { "member_id": "b-member", "name": "B. Member", "likelihood": 0.72, "band": "high",
+      "rationale": "Publishes directly on profile-guided optimization and has served on the last three PCs for this topic.",
+      "topic_overlap": ["profile-guided optimization", "ahead-of-time compilation"],
+      "evidence": [
+        { "kind": "publication", "detail": "Static profile inference for AOT compilers, PLDI 2024", "url": "https://example.org/p1" },
+        { "kind": "prior-review", "detail": "PC member for OOPSLA 2024 and 2025" }
+      ] },
+    { "member_id": "c-member", "name": "C. Member", "likelihood": 0.41, "band": "medium",
+      "rationale": "Works on ML for systems broadly but not on compilers specifically.",
+      "topic_overlap": ["machine learning for systems"],
+      "evidence": [{ "kind": "stated-interest", "detail": "Lists 'ML for systems' among PC topics" }] },
+    { "member_id": "a-chair", "name": "A. Chair", "likelihood": 0.05, "band": "low",
+      "rationale": "Chairs do not normally review; also a declared institutional conflict.",
+      "conflict": { "kind": "same-institution", "detail": "Shares an affiliation with an author" } }
+  ]
+}

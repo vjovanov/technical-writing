@@ -1,0 +1,272 @@
+# State machine diagram
+# ---------------------
+#
+# Legend: [final] [gate] = gating (only a human transitions out)
+#         [program] = deterministic command, routes on exit code
+#
+#   import-inputs [program]  ── nonzero ──> inputs-rejected [gate, final]
+#      |
+#      | exit 0  (paper.json and program-committee.json conform to their schemas)
+#      v
+#   match-reviewers ({{match_target}})
+#      |
+#      v
+#   validate-reviewer-matches [program] ── exit 0 ──────────> completed [final]
+#      |         \
+#      |          \── nonzero, visitCount >= visits --> reviewer-matches-failed [gate, final]
+#      |
+#      +-- nonzero, visitCount < visits
+#             |
+#             v
+#          repair-reviewer-matches ({{repair_target}}, visits: {{repair_attempts}})
+#             |
+#             +--> validate-reviewer-matches
+#
+#   any non-final state --> cancelled [final]
+#
+# Rhei artifact contracts cannot reference paths outside the workspace, so
+# upstream artifacts are copied in by import-inputs, which refuses anything that
+# is missing, is the wrong artifact, or fails its schema. That boundary check is
+# the composition contract between templates.
+#
+# Per-task path:
+#   match: import-inputs -> match-reviewers -> validate-reviewer-matches [-> repair-reviewer-matches
+#          -> validate-reviewer-matches] -> completed | reviewer-matches-failed
+
+name: reviewer-match
+version: 1.0.0
+
+states:
+  import-inputs:
+    description: Copy the upstream artifacts into this workspace, rejecting anything that does not meet its contract.
+    program: >-
+      python3 scripts/import_artifact.py --schema-dir schemas
+      --source {{paper}} --dest inputs/paper.json --expect-artifact paper &&
+      python3 scripts/import_artifact.py --schema-dir schemas
+      --source {{program_committee}} --dest inputs/program-committee.json
+      --expect-artifact program-committee
+    program_timeout: 2m
+    outputs:
+      - name: paper
+        path: inputs/paper.json
+        description: paper.json imported from the paper-ingest workspace
+      - name: committee
+        path: inputs/program-committee.json
+        description: program-committee.json imported from the venue-intake workspace
+
+  inputs-rejected:
+    description: Human gate — an upstream artifact is missing, is the wrong artifact, or fails its schema.
+    gating: true
+    final: true
+    instructions: |
+      An input to Task {task_id} did not meet its contract. This task's result
+      file names the file and the exact problem.
+
+      Expected inputs:
+
+      - `{{paper}}` — a `paper` artifact from a `paper-ingest` workspace
+      - `{{program_committee}}` — a `program-committee` artifact from a
+        `venue-intake` workspace
+
+      Either the upstream template has not run yet, this workspace's `paper` /
+      `program_committee` input points somewhere wrong, or the upstream
+      workspace stopped on its own validation gate. Fix the source, then re-run
+      this task from `import-inputs`.
+
+  match-reviewers:
+    description: Estimate per-member review likelihood from topic overlap, publication record, and conflicts.
+    target: {{match_target}}
+    inputs:
+      - name: paper
+        path: inputs/paper.json
+      - name: committee
+        path: inputs/program-committee.json
+    personality: |
+      You are estimating who will read this paper, and you are being honest
+      about how much you actually know. A likelihood is a claim: it needs
+      grounds a reader can check. Never invent a publication, an affiliation,
+      or a research interest to justify a score — an unsupported match sends
+      the next template hunting for citations that do not exist.
+    instructions: |
+      Match reviewers for Task {task_id}: {task_title}.
+
+      Read `{input.paper.path}` — especially `topics[]`, `title`, and
+      `contributions[]` — and `{input.committee.path}` for the roster.
+
+      1. For each committee member, judge whether the paper plausibly falls in
+         their area. Members with no plausible overlap can be given a low band
+         and a one-line rationale without further research; do not spend effort
+         building a case for an obvious non-match.
+
+      2. For plausible members, research their recent work — homepage, DBLP,
+         the venues they publish in — and record concrete `evidence[]`:
+         a publication that overlaps, a stated PC topic, prior service on this
+         venue's committee. Cite what you actually found, with a URL where you
+         have one.
+
+      3. Estimate `likelihood` in [0,1] and set `band`:
+         `high` for a strong, specific overlap with the paper's core topic;
+         `medium` for an adjacent area or a broad-interest member;
+         `low` for no meaningful overlap, or a conflict.
+
+      4. Record conflicts. A member sharing an affiliation with an author, a
+         co-author, or a former advisor will normally be excluded from the
+         assignment regardless of fit — set `conflict` and drop the band to
+         `low`.
+      {% if author_names %}
+         Author names to check conflicts against:
+      {% for a in author_names %}
+         - {{ a }}
+      {% endfor %}
+      {% else %}
+         No author names were supplied, so author-identity conflicts cannot be
+         detected. Record institutional conflicts only where the paper itself
+         makes them evident, and note the limitation in `method`.
+      {% endif %}
+
+      5. Write `{output.matches.path}` conforming to
+         `schemas/reviewer-matches.schema.json`. `paper_id` must be
+         `{{paper_id}}`, and every `member_id` must be an id that exists in
+         `{input.committee.path}`.
+
+         Set `method` to a one-sentence description of how you actually
+         estimated likelihood, so a reader can calibrate how much to trust it.
+
+      `examples/reviewer-matches.json` is a well-formed instance to model.
+
+      Transition to `validate-reviewer-matches` when the artifact is written.
+    outputs:
+      - name: matches
+        path: matches/reviewer-matches.json
+        description: Per-member review likelihood with evidence and conflicts
+
+  validate-reviewer-matches:
+    description: Check reviewer-matches.json against its schema. Deterministic — a program, not an agent.
+    program: "python3 scripts/validate_artifact.py --schema-dir schemas --instance matches/reviewer-matches.json --expect-artifact reviewer-matches"
+    program_timeout: 2m
+    visits: {{repair_attempts}}
+    inputs:
+      - name: reviewer-matches
+        path: matches/reviewer-matches.json
+
+  repair-reviewer-matches:
+    description: The agent fixes the schema violations the validator reported in reviewer-matches.json.
+    target: {{repair_target}}
+    visits: {{repair_attempts}}
+    inputs:
+      - name: reviewer-matches
+        path: matches/reviewer-matches.json
+    personality: |
+      You are correcting a structured artifact that failed its schema contract.
+      Fix the artifact to match the schema. Never weaken the schema, and never
+      invent content to satisfy a required field — a fabricated value passes
+      validation and then misleads every template downstream.
+    instructions: |
+      Repair pass {visit_count} of {visits} for Task {task_id}: {task_title}.
+
+      `{input.reviewer-matches.path}` failed validation against
+      `schemas/reviewer-matches.schema.json`. The validator wrote every problem, each
+      with its JSON path, into this task's result file. Read it, read the
+      schema, and fix each one.
+
+      The schemas are closed (`additionalProperties: false`), so an unexpected
+      property must be removed rather than renamed. Ids constrained by a
+      pattern must match it exactly.
+
+      Transition to `validate-reviewer-matches` when the artifact is corrected.
+
+  reviewer-matches-failed:
+    description: Human gate — reviewer-matches.json still fails its schema after every repair attempt.
+    gating: true
+    final: true
+    inputs:
+      - name: reviewer-matches
+        path: matches/reviewer-matches.json
+    instructions: |
+      Reviewer matches could not be made schema-valid for Task {task_id} within
+      {{repair_attempts}} repair attempts.
+
+      Read this task's result file for the outstanding violations, then fix
+      `matches/reviewer-matches.json` by hand and re-check it:
+
+        python3 scripts/validate_artifact.py --schema-dir schemas \
+          --instance matches/reviewer-matches.json --expect-artifact reviewer-matches
+
+      Nothing downstream should consume this artifact until it validates.
+
+  completed:
+    description: Reviewer matches are written and conform to the schema.
+    final: true
+    instructions: |
+      No further action is required. `matches/reviewer-matches.json` is ready to
+      be passed as the `reviewer_matches` input of `pc-citation-scan`.
+
+  cancelled:
+    description: Reviewer matching was cancelled.
+    final: true
+    instructions: |
+      Stop work and leave existing artifacts unchanged.
+
+transitions:
+  - from: import-inputs
+    to: match-reviewers
+    description: Every upstream artifact conforms to its schema.
+    exit_code: 0
+
+  - from: import-inputs
+    to: inputs-rejected
+    description: An upstream artifact is missing, wrong, or malformed.
+    exit_code: nonzero
+
+  - from: match-reviewers
+    to: validate-reviewer-matches
+    description: Matches are written; check the contract.
+
+  - from: validate-reviewer-matches
+    to: completed
+    description: The artifact conforms to its schema.
+    exit_code: 0
+
+  - from: validate-reviewer-matches
+    to: repair-reviewer-matches
+    description: The artifact violates its schema and repair attempts remain.
+    exit_code: nonzero
+    condition: visitCount < visits
+
+  - from: validate-reviewer-matches
+    to: reviewer-matches-failed
+    description: The artifact still violates its schema after every repair attempt.
+    exit_code: nonzero
+    condition: visitCount >= visits
+
+  - from: repair-reviewer-matches
+    to: validate-reviewer-matches
+    description: The agent corrected the artifact; re-check it.
+
+  - from: "*"
+    to: cancelled
+    description: Cancel reviewer matching from any non-final state.
+
+profiles:
+  workspace:
+    initial: completed
+    allowed:
+      - completed
+
+  match-task:
+    initial: import-inputs
+    allowed:
+      - import-inputs
+      - inputs-rejected
+      - match-reviewers
+      - validate-reviewer-matches
+      - repair-reviewer-matches
+      - reviewer-matches-failed
+      - completed
+      - cancelled
+
+node_policy:
+  root: workspace
+  default: match-task
+  by_type:
+    task: match-task

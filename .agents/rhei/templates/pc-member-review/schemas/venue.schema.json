@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "paper-pipeline/venue/1.0",
+  "title": "Venue",
+  "description": "Resolved venue: scope, review process, and the review form a reviewer must fill in. Produced by venue-intake.",
+  "type": "object",
+  "required": ["artifact", "schema_version", "generated_by", "name", "review_process", "review_form"],
+  "additionalProperties": false,
+  "properties": {
+    "artifact": { "const": "venue" },
+    "schema_version": { "const": "1.0" },
+    "generated_by": { "type": "string", "minLength": 1 },
+    "name": { "type": "string", "minLength": 1, "description": "Venue as it should be written in prose, e.g. \"OOPSLA 2026\"" },
+    "short_name": { "type": "string" },
+    "year": { "type": "integer", "minimum": 1960 },
+    "kind": { "enum": ["conference", "journal", "workshop", "symposium", "other"] },
+    "url": { "type": "string" },
+    "scope": { "type": "string", "description": "What the venue publishes, in its own words" },
+    "selection_criteria": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+    "dates": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "abstract": { "type": "string" },
+        "submission": { "type": "string" },
+        "rebuttal": { "type": "string" },
+        "notification": { "type": "string" },
+        "camera_ready": { "type": "string" }
+      }
+    },
+    "review_process": {
+      "type": "object",
+      "required": ["double_blind"],
+      "additionalProperties": false,
+      "properties": {
+        "double_blind": { "type": "boolean" },
+        "rebuttal": { "type": "boolean" },
+        "rounds": { "type": "integer", "minimum": 1 },
+        "reviews_per_paper": { "type": "integer", "minimum": 1 },
+        "notes": { "type": "string" }
+      }
+    },
+    "review_form": {
+      "type": "object",
+      "required": ["fields"],
+      "additionalProperties": false,
+      "properties": {
+        "verbatim_path": { "type": "string", "description": "Offline form kept byte-for-byte, e.g. a HotCRP \"==+==\" text form; reproduced verbatim in the submission file" },
+        "fields": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["id", "label", "type"],
+            "additionalProperties": false,
+            "properties": {
+              "id": { "type": "string", "minLength": 1 },
+              "label": { "type": "string", "minLength": 1 },
+              "type": { "enum": ["text", "score", "choice", "boolean"] },
+              "required": { "type": "boolean" },
+              "scale": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "min": { "type": "integer" },
+                  "max": { "type": "integer" },
+                  "labels": { "type": "array", "items": { "type": "string" } }
+                }
+              },
+              "choices": { "type": "array", "items": { "type": "string" } }
+            }
+          }
+        }
+      }
+    },
+    "guidelines_path": { "type": "string", "description": "Reviewer guidelines verbatim, relative to the workspace" }
+  }
+}

@@ -36,42 +36,41 @@ See [`ai-writing/README.md`](ai-writing/README.md) for setup and exactly what is
 and is not enforced, and [`ai-writing/AGENTS.md`](ai-writing/AGENTS.md) for the
 rules agents are expected to follow.
 
-### [`paper-review/`](paper-review/) — rhei template
+### [`.agents/rhei/`](.agents/rhei/) — the paper pipeline
 
-A multi-model conference paper review pipeline, packaged as a
-[rhei](https://github.com/vjovanov/rhei) template. One instantiation reviews one paper:
+Eight composable [rhei](https://github.com/vjovanov/rhei) templates for reviewing
+a conference paper, handing each other **schema-validated JSON artifacts**. They
+live in `.agents/rhei/templates/`, so `rhei templates` and
+`rhei instantiate <name>` find them automatically from anywhere in this
+repository — no copying.
 
-- **Ingest** — resolves the venue (website, file, or name) into reviewer
-  guidelines and the review form; renders the PDF page-by-page and produces a
-  canonical full-text extraction plus a digest (section map, claimed
-  contributions, key claims).
-- **Related work** — searches the literature and downloads openly accessible
-  PDFs into a ranked index.
-- **Review fan-out** — two reviewer models independently summarize the paper
-  and review every core section, plus dedicated evaluation and related-work
-  passes. Review topics are derived from what the paper actually contains.
-- **Aggregate and verify** — an aggregator merges all findings into
-  addressable points `P-xxx`; a separate verifier classifies each point
-  `confirmed` / `weakened` / `rejected` with evidence. Rejected points never
-  reach the report.
-- **Human gates** — three of them: intake approval, point curation, and final
-  sign-off on scores. The human is the author of the outward-facing review.
+| Template | Answers |
+|---|---|
+| `paper-ingest` | What does this paper actually say? *(PDF or LaTeX — settled once, here)* |
+| `venue-intake` | What does this venue select for, and who is on the committee? |
+| `reviewer-match` | Which PC members are likely to review it, and on what evidence? |
+| `pc-citation-scan` | Whose work should this paper be engaging with, and is it cited? |
+| `related-work` | What does it have to beat? *(independent of the committee)* |
+| `overall-review` | What do reviewers of different configurable stances make of it? |
+| `section-review` | What is wrong section by section? *(tasks spawned from the paper's own section map)* |
+| `pc-member-review` | What review do I submit? *(composes the rest, two human gates)* |
 
-Output is a submission-ready review plus a traceable long form that keeps
-`[P-xxx]` markers back to the verified points.
+Composition runs through inputs and outputs: every handoff is a JSON artifact with
+a schema, checked at the boundary before the consumer spends a token on it. A
+wrong or stale file fails immediately with a clear message instead of producing
+confident nonsense three steps later. Validation runs in **program states**, not
+agent states — whether a file conforms to a schema is a decided question.
 
-Install by copying into `~/.agents/rhei/templates/`:
+Run one template, a subset, or all eight. The author-side subset
+(`reviewer-match` + `pc-citation-scan`) tells you who will likely read your paper
+and whose work you have not cited, without running any review at all.
 
 ```bash
-cp -r paper-review ~/.agents/rhei/templates/
+.agents/rhei/shared/scripts/test_contracts.sh   # schemas, validator, corruption, cross-wiring
+.agents/rhei/shared/scripts/test_templates.sh   # every template + input branches + fan-out
 ```
 
-See [`paper-review/README.md`](paper-review/README.md) for inputs, the state
-machine, and instantiation examples.
+See [`.agents/rhei/shared/README.md`](.agents/rhei/shared/README.md) for the
+artifact graph, the schema contract, agent configuration, and a full end-to-end
+invocation.
 
-#### Note on model targets
-
-The bundled `settings.json` declares a `codex` agent resolved from `PATH`, and
-the template defaults to Codex and Claude reviewer targets. Adjust the
-selectors in `template.yaml` (or override with `--values`) for the models you
-actually have.

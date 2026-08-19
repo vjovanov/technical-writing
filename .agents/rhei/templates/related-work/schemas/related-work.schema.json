@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "paper-pipeline/related-work/1.0",
+  "title": "Related work",
+  "description": "Literature the submission must be judged against, found independently of the program committee. Produced by related-work.",
+  "type": "object",
+  "required": ["artifact", "schema_version", "generated_by", "paper_id", "entries"],
+  "additionalProperties": false,
+  "properties": {
+    "artifact": { "const": "related-work" },
+    "schema_version": { "const": "1.0" },
+    "generated_by": { "type": "string", "minLength": 1 },
+    "paper_id": { "type": "string", "minLength": 1 },
+    "queries": { "type": "array", "items": { "type": "string" }, "description": "Searches run, so the sweep can be reproduced or widened" },
+    "entries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "title", "relation", "relevance"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string", "pattern": "^RW[0-9]+$" },
+          "title": { "type": "string", "minLength": 1 },
+          "authors": { "type": "array", "items": { "type": "string" } },
+          "year": { "type": "integer", "minimum": 1900 },
+          "venue": { "type": "string" },
+          "doi": { "type": "string" },
+          "url": { "type": "string" },
+          "pdf_path": { "type": "string", "description": "Local copy when the PDF was openly accessible" },
+          "relation": {
+            "enum": ["closest-prior", "competing", "seminal", "recent", "self-overlap", "background"],
+            "description": "How it stands to the submission"
+          },
+          "relevance": { "type": "string", "minLength": 1 },
+          "cited_by_paper": { "type": "boolean", "description": "Whether the submission already cites it — false here is a candidate missing citation" },
+          "notes": { "type": "string" }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "paper-pipeline/pc-citations/1.0",
+  "title": "PC citations",
+  "description": "For each likely reviewer, their own work that this paper should engage with, and whether it is already cited. Produced by pc-citation-scan.",
+  "type": "object",
+  "required": ["artifact", "schema_version", "generated_by", "paper_id", "entries"],
+  "additionalProperties": false,
+  "properties": {
+    "artifact": { "const": "pc-citations" },
+    "schema_version": { "const": "1.0" },
+    "generated_by": { "type": "string", "minLength": 1 },
+    "paper_id": { "type": "string", "minLength": 1 },
+    "entries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["member_id", "name", "papers"],
+        "additionalProperties": false,
+        "properties": {
+          "member_id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+          "name": { "type": "string", "minLength": 1 },
+          "band": { "enum": ["high", "medium", "low"], "description": "Carried over from reviewer-matches" },
+          "papers": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["title", "relevance", "already_cited"],
+              "additionalProperties": false,
+              "properties": {
+                "title": { "type": "string", "minLength": 1 },
+                "year": { "type": "integer", "minimum": 1900 },
+                "venue": { "type": "string" },
+                "doi": { "type": "string" },
+                "url": { "type": "string" },
+                "bibtex_key": { "type": "string", "description": "Key in the paper's .bib when already_cited is true" },
+                "relevance": { "type": "string", "minLength": 1, "description": "Why this paper matters to the submission" },
+                "already_cited": { "type": "boolean" },
+                "suggested_context": { "type": "string", "description": "Where and how to cite it, when not already cited" },
+                "citation_priority": { "enum": ["must", "should", "optional"] }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,34 @@
+{
+  "artifact": "review-points",
+  "schema_version": "1.0",
+  "generated_by": "pc-member-review",
+  "paper_id": "submission-42",
+  "points": [
+    { "id": "P-001", "statement": "Reported speedups carry no variance or run count, so the central claim is not yet supported.",
+      "kind": "weakness", "severity": "major", "section_id": "S3",
+      "sources": [
+        { "origin": "overall-review", "personality_id": "academic" },
+        { "origin": "overall-review", "personality_id": "industry-skeptical" },
+        { "origin": "section-review", "personality_id": "industry-skeptical", "section_id": "S3" }
+      ],
+      "verdict": "confirmed",
+      "evidence": ["Table 2 reports point estimates only", "Section 5 describes no repetition protocol"],
+      "human_action": "keep" },
+    { "id": "P-002", "statement": "The paper does not compare against the lightweight non-ML baseline from CC 2025.",
+      "kind": "weakness", "severity": "major",
+      "sources": [{ "origin": "overall-review", "personality_id": "academic" }],
+      "verdict": "weakened",
+      "verified_statement": "The CC 2025 baseline is mentioned in related work but never compared against empirically.",
+      "verification_note": "The paper does cite the work; the gap is empirical comparison, not citation.",
+      "human_action": "keep" },
+    { "id": "P-003", "statement": "\"Method signature\" is not defined precisely.",
+      "kind": "weakness", "severity": "minor", "section_id": "S2",
+      "sources": [{ "origin": "section-review", "personality_id": "academic", "section_id": "S2" }],
+      "verdict": "confirmed" },
+    { "id": "P-004", "statement": "The approach is trivially derivable from code2vec.",
+      "kind": "weakness", "severity": "major",
+      "sources": [{ "origin": "overall-review", "personality_id": "industry-skeptical" }],
+      "verdict": "rejected",
+      "verification_note": "Section 2.1 documents three non-obvious adaptations required for the AOT setting; the point does not survive." }
+  ]
+}

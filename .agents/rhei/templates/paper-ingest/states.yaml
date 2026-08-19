@@ -1,0 +1,235 @@
+# State machine diagram
+# ---------------------
+#
+# Legend: [initial] [final] [gate] = gating (only a human transitions out)
+#         [program] = deterministic command, routes on exit code
+#
+#   ingest [initial]  ({{ingest_target}})
+#      |
+#      v
+#   validate-paper [program]  ── exit 0 ────────────────> completed [final]
+#      |                    \
+#      |                     \── exit nonzero, visitCount >= visits
+#      |                          \--> ingest-failed [gate, final]
+#      |
+#      +-- exit nonzero, visitCount < visits
+#             |
+#             v
+#          repair-paper  ({{ingest_target}}, visits: {{repair_attempts}})
+#             |
+#             +--> validate-paper   (re-validate the corrected artifact)
+#
+#   any non-final state --> cancelled [final]
+#
+# The validation gate is a program state, not an agent: whether paper.json
+# conforms to its schema is a decided question, and letting a model answer it
+# would defeat the point of having a contract.
+#
+# Per-task paths:
+#   ingest: ingest -> validate-paper -> completed
+#           ingest -> validate-paper -> repair-paper -> validate-paper -> completed
+#           ingest -> validate-paper -> repair-paper -> validate-paper -> ingest-failed
+
+name: paper-ingest
+version: 1.0.0
+
+states:
+  ingest:
+    description: Read the submission once and write the full text plus the structured paper artifact.
+    target: {{ingest_target}}
+    personality: |
+      You are the paper-intake agent. Your extraction is the canonical reading
+      of this paper for every downstream reviewer, so be faithful, complete,
+      and neutral. Do not review, rate, or editorialize — a judgement smuggled
+      into the extraction biases every reviewer who reads it.
+    instructions: |
+      Ingest the submission for Task {task_id}: {task_title}.
+
+      Source: `{{paper}}`
+      Requested mode: `{{source_kind}}`
+      All paths below are relative to this workspace.
+
+      1. Decide the ingest path.
+
+         With mode `auto`: a `.pdf` file takes the PDF path; a `.tex` file or a
+         directory containing `.tex` files takes the LaTeX path. With mode
+         `pdf` or `latex`, use that path and fail loudly if the source does not
+         match it. If the source does not exist at all, stop and report that —
+         do not invent content.
+
+      2. PDF path only — render every page, then read the images in order:
+
+           mkdir -p paper/pages
+           pdftoppm -png -r {{render_dpi}} "{{paper}}" paper/pages/page
+
+         Fall back to `mutool draw` or ImageMagick `convert` if `pdftoppm` is
+         unavailable. Reading the rendered pages rather than a text dump is
+         what lets you describe figures and read table layouts correctly.
+
+      3. LaTeX path only — locate the main file (the one with
+         `\documentclass`), inline every `\input` and `\include`, and read the
+         flattened source. Do not create `paper/pages/`. Record which `.tex`
+         file each section came from.
+
+      4. Write `{output.full-text.path}` — a faithful markdown extraction of
+         the whole paper: every section in order, all prose, and for each
+         figure and table a bracketed description of what it shows with its
+         number and page. Reproduce equations and numbers exactly. Do not
+         summarize, reorder, or comment.
+
+      5. Write `{output.paper.path}` conforming to `schemas/paper.schema.json`.
+         Read that schema first — the next state validates against it and the
+         workspace cannot complete until it passes.
+
+         Field notes that matter downstream:
+
+         - `paper_id` must be exactly `{{paper_id}}`.
+         - `source_kind` must be the path you actually took.
+         - `sections[].kind`: mark abstract, acknowledgements, references, and
+           appendices `boilerplate`; mark every substantive technical section
+           `core`. `section-review` spawns one review task per `core` section,
+           so this choice directly controls downstream cost and coverage.
+         - `sections[].id`, `contributions[].id`, `claims[].id` must be `S<n>`,
+           `C<n>`, `K<n>` and stay stable — later artifacts cite them.
+         - `claims[]` are *falsifiable* statements with a pointer to the
+           evidence (a table, figure, or section). "The approach is elegant" is
+           not a claim; "runtime improves by 2.31% on Renaissance" is.
+         - `topics[]` is the paper's subject profile with weights in [0,1].
+           `reviewer-match` matches these against committee members' interests,
+           so be specific: "profile-guided optimization", not "compilers".
+
+      An example of a well-formed artifact is checked in at
+      `examples/paper.json` — read it if the shape is unclear.
+
+      Transition to `validate-paper` when both artifacts are written.
+    outputs:
+      - name: full-text
+        path: paper/full-text.md
+        description: Faithful full-text extraction of the whole paper
+      - name: paper
+        path: paper/paper.json
+        description: Structured reading — sections, contributions, claims, topics
+
+  validate-paper:
+    description: Check paper.json against its schema. Deterministic — a program, not an agent.
+    program: "python3 scripts/validate_artifact.py --schema-dir schemas --instance paper/paper.json --expect-artifact paper"
+    program_timeout: 2m
+    visits: {{repair_attempts}}
+    inputs:
+      - name: paper
+        path: paper/paper.json
+
+  repair-paper:
+    description: The agent fixes the schema violations the validator reported.
+    target: {{ingest_target}}
+    visits: {{repair_attempts}}
+    inputs:
+      - name: paper
+        path: paper/paper.json
+    personality: |
+      You are correcting a structured artifact that failed its schema contract.
+      Fix the artifact to match the schema; do not weaken the schema, and do
+      not invent content to satisfy a required field — if the paper genuinely
+      lacks something, say so in the field's text rather than fabricating it.
+    instructions: |
+      Repair pass {visit_count} of {visits} for Task {task_id}: {task_title}.
+
+      `{input.paper.path}` failed validation against `schemas/paper.schema.json`.
+      The validator wrote the exact problems, each with a JSON path, into this
+      task's result file — read it, then read the schema.
+
+      Fix every reported problem in `{input.paper.path}`. Common causes:
+
+      - An id that does not match its required pattern (`S1`, `C1`, `K1`).
+      - A `sections[].kind` that is neither `core` nor `boilerplate`.
+      - An extra property the schema does not allow — the schemas are closed
+        (`additionalProperties: false`), so remove it rather than renaming it.
+      - A missing required field, which usually means that part of the paper
+        was not extracted; go back to `paper/full-text.md` and fill it in.
+
+      Do not touch `paper/full-text.md`. Transition to `validate-paper` when
+      the artifact is corrected.
+
+  ingest-failed:
+    description: Human gate — the artifact still fails its schema after every repair attempt.
+    gating: true
+    final: true
+    inputs:
+      - name: paper
+        path: paper/paper.json
+    instructions: |
+      Ingest could not produce a schema-valid `paper/paper.json` for Task
+      {task_id} within {{repair_attempts}} repair attempts.
+
+      Read this task's result file for the outstanding violations, then either
+      fix `paper/paper.json` by hand or re-run ingest against a different
+      source. Downstream templates in the pipeline read this artifact, so
+      nothing else should run until it validates:
+
+        python3 scripts/validate_artifact.py \
+          --schema-dir schemas --instance paper/paper.json --expect-artifact paper
+
+  completed:
+    description: The paper is ingested and its artifact conforms to the schema.
+    final: true
+    instructions: |
+      No further action is required. `paper/paper.json` is ready to be passed
+      as the `paper` input of the downstream paper-pipeline templates.
+
+  cancelled:
+    description: Ingest was cancelled.
+    final: true
+    instructions: |
+      Stop work and leave existing artifacts unchanged.
+
+transitions:
+  - from: ingest
+    to: validate-paper
+    description: Full text and structured artifact are written; check the contract.
+
+  - from: validate-paper
+    to: completed
+    description: The artifact conforms to its schema.
+    exit_code: 0
+
+  - from: validate-paper
+    to: repair-paper
+    description: The artifact violates its schema and repair attempts remain.
+    exit_code: nonzero
+    condition: visitCount < visits
+
+  - from: validate-paper
+    to: ingest-failed
+    description: The artifact still violates its schema after every repair attempt.
+    exit_code: nonzero
+    condition: visitCount >= visits
+
+  - from: repair-paper
+    to: validate-paper
+    description: The agent corrected the artifact; re-check it.
+
+  - from: "*"
+    to: cancelled
+    description: Cancel ingest from any non-final state.
+
+profiles:
+  workspace:
+    initial: completed
+    allowed:
+      - completed
+
+  ingest-task:
+    initial: ingest
+    allowed:
+      - ingest
+      - validate-paper
+      - repair-paper
+      - ingest-failed
+      - completed
+      - cancelled
+
+node_policy:
+  root: workspace
+  default: ingest-task
+  by_type:
+    task: ingest-task

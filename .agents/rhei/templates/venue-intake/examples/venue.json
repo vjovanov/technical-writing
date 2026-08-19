@@ -1,0 +1,31 @@
+{
+  "artifact": "venue",
+  "schema_version": "1.0",
+  "generated_by": "venue-intake",
+  "name": "OOPSLA 2026",
+  "short_name": "OOPSLA",
+  "year": 2026,
+  "kind": "conference",
+  "url": "https://2026.splashcon.org/track/OOPSLA",
+  "scope": "Programming languages, systems, and software engineering research.",
+  "selection_criteria": [
+    "Novelty relative to prior work",
+    "Technical soundness",
+    "Empirical rigor and reproducibility"
+  ],
+  "dates": { "submission": "2026-04-10", "rebuttal": "2026-06-15", "notification": "2026-07-20" },
+  "review_process": { "double_blind": true, "rebuttal": true, "rounds": 2, "reviews_per_paper": 3 },
+  "review_form": {
+    "verbatim_path": "inputs/review-form.txt",
+    "fields": [
+      { "id": "summary", "label": "Paper summary", "type": "text", "required": true },
+      { "id": "strengths", "label": "Strengths", "type": "text", "required": true },
+      { "id": "weaknesses", "label": "Weaknesses", "type": "text", "required": true },
+      { "id": "overall", "label": "Overall merit", "type": "score", "required": true,
+        "scale": { "min": 1, "max": 5, "labels": ["reject", "weak reject", "borderline", "weak accept", "accept"] } },
+      { "id": "confidence", "label": "Reviewer expertise", "type": "score", "required": true,
+        "scale": { "min": 1, "max": 4 } }
+    ]
+  },
+  "guidelines_path": "inputs/guidelines.md"
+}

@@ -1,0 +1,5 @@
+{% if review_form %}{{review_form}}{% else %}
+# The resolve-venue state fills this with the venue's offline review form,
+# verbatim, if it publishes one. Kept byte-for-byte: pc-member-review
+# reproduces it exactly in the final submission file.
+{% endif %}

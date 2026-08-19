@@ -1,0 +1,16 @@
+{
+  "artifact": "program-committee",
+  "schema_version": "1.0",
+  "generated_by": "venue-intake",
+  "venue_name": "OOPSLA 2026",
+  "source_url": "https://2026.splashcon.org/committee/OOPSLA",
+  "complete": true,
+  "members": [
+    { "id": "a-chair", "name": "A. Chair", "role": "chair", "affiliation": "Example University",
+      "country": "US", "dblp": "https://dblp.org/pid/00/0000", "topics": ["compilers", "runtime systems"] },
+    { "id": "b-member", "name": "B. Member", "role": "pc", "affiliation": "Example Labs",
+      "topics": ["profile-guided optimization", "JIT compilation"] },
+    { "id": "c-member", "name": "C. Member", "role": "erc", "affiliation": "Example Institute",
+      "topics": ["machine learning for systems"] }
+  ]
+}

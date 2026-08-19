@@ -1,0 +1,340 @@
+# State machine diagram
+# ---------------------
+#
+# Legend: [final] [gate] = gating (only a human transitions out)
+#         [program] = deterministic command, routes on exit code
+#
+#   venue task:
+#     resolve-venue ({{intake_target}})
+#        |
+#        v
+#     validate-venue [program] ── exit 0 ──────────────────> completed [final]
+#        |         \
+#        |          \── nonzero, visitCount >= visits --> venue-failed [gate, final]
+#        |
+#        +-- nonzero, visitCount < visits --> repair-venue --> validate-venue
+#
+#   committee task:
+#     harvest-pc ({{intake_target}})
+#        |
+#        v
+#     validate-pc [program] ── exit 0 ─────────────────────> completed [final]
+#        |         \
+#        |          \── nonzero, visitCount >= visits --> pc-failed [gate, final]
+#        |
+#        +-- nonzero, visitCount < visits --> repair-pc --> validate-pc
+#
+#   any non-final state --> cancelled [final]
+#
+# The two tasks are separate because they fail independently: a venue that
+# publishes no committee roster should still yield a usable venue.json.
+#
+# Per-task paths:
+#   venue:     resolve-venue -> validate-venue [-> repair-venue -> validate-venue] -> completed | venue-failed
+#   committee: harvest-pc    -> validate-pc    [-> repair-pc    -> validate-pc]    -> completed | pc-failed
+
+name: venue-intake
+version: 1.0.0
+
+states:
+  resolve-venue:
+    description: Resolve the venue reference into the structured venue record and its verbatim reviewer material.
+    target: {{intake_target}}
+    personality: |
+      You are the venue-intake agent. You are recording what the venue says
+      about itself, not what you believe about it. Where the venue is silent,
+      leave the field out rather than filling it with a plausible guess — a
+      fabricated deadline or invented review-form field is worse than a gap,
+      because everything downstream treats this file as ground truth.
+    instructions: |
+      Resolve the venue for Task {task_id}: {task_title}.
+
+      Reference: `{{conference}}`
+
+      1. Work out what the reference is and read it accordingly:
+
+         - A URL: fetch it, then follow the links that matter — the call for
+           papers, the reviewing guidelines, the committee page, and the
+           submission instructions.
+         - A local file path: read it. Do not go to the network.
+         - A bare venue name: search for the current edition's official site,
+           and prefer the official site over any aggregator.
+
+      2. Write `venue/guidelines.md`.
+      {% if guidelines %}
+         Reviewer guidelines were supplied at instantiation and are already
+         written there verbatim. Leave the file exactly as it is.
+      {% else %}
+         Fill it with the venue's published reviewer guidelines, verbatim. If
+         the venue publishes none, write a single line saying so.
+      {% endif %}
+
+      3. Write `venue/review-form.txt`.
+      {% if review_form %}
+         An offline review form was supplied at instantiation and is already
+         written there verbatim. Leave the file exactly as it is — later in the
+         pipeline it is reproduced byte-for-byte in the submission file, so any
+         edit here corrupts the final output.
+      {% else %}
+         Fill it with the venue's offline review form verbatim if it publishes
+         one (HotCRP forms use `==+==` markers). If it publishes none, leave
+         the file empty and rely on the `review_form.fields` you record below.
+      {% endif %}
+
+      4. Write `{output.venue.path}` conforming to `schemas/venue.schema.json`.
+         Read the schema first — the next state validates against it.
+
+         - `name` is how the venue should be written in prose ("OOPSLA 2026").
+         - `review_form.fields[]` must list every field a reviewer actually
+           fills in, with its type and, for scores, its scale and labels. This
+           is what `pc-member-review` renders the final review against, so an
+           omitted field becomes a missing section of the submitted review.
+         - `review_form.verbatim_path` must point at `venue/review-form.txt`
+           when that file has content.
+         - `review_process.double_blind` decides whether reviewers may look up
+           author identities later in the pipeline. Get it right.
+
+         `examples/venue.json` is a well-formed instance to model.
+
+      Transition to `validate-venue` when all three files are written.
+    outputs:
+      - name: venue
+        path: venue/venue.json
+        description: Structured venue record — scope, process, and review form
+      - name: guidelines
+        path: venue/guidelines.md
+        description: Reviewer guidelines, verbatim
+
+  validate-venue:
+    description: Check venue.json against its schema.
+    program: "python3 scripts/validate_artifact.py --schema-dir schemas --instance venue/venue.json --expect-artifact venue"
+    program_timeout: 2m
+    visits: {{repair_attempts}}
+    inputs:
+      - name: venue
+        path: venue/venue.json
+
+  repair-venue:
+    description: The agent fixes the schema violations the validator reported in venue.json.
+    target: {{intake_target}}
+    visits: {{repair_attempts}}
+    inputs:
+      - name: venue
+        path: venue/venue.json
+    personality: |
+      You are correcting a structured artifact that failed its schema contract.
+      Fix the artifact, never the schema, and never invent venue facts to fill
+      a required field.
+    instructions: |
+      Repair pass {visit_count} of {visits} for Task {task_id}: {task_title}.
+
+      `{input.venue.path}` failed validation against `schemas/venue.schema.json`.
+      The validator wrote every problem with its JSON path into this task's
+      result file. Read it, read the schema, and fix each one.
+
+      The schemas are closed (`additionalProperties: false`), so an unexpected
+      property must be removed rather than renamed. If a required field is
+      missing because the venue never published it, go back to the source and
+      look again before concluding it is genuinely absent.
+
+      Transition to `validate-venue` when the artifact is corrected.
+
+  venue-failed:
+    description: Human gate — venue.json still fails its schema after every repair attempt.
+    gating: true
+    final: true
+    instructions: |
+      The venue record for Task {task_id} could not be made schema-valid within
+      {{repair_attempts}} repair attempts. Read this task's result file for the
+      outstanding violations and fix `venue/venue.json` by hand, then check it:
+
+        python3 scripts/validate_artifact.py \
+          --schema-dir schemas --instance venue/venue.json --expect-artifact venue
+
+  harvest-pc:
+    description: Harvest the full program committee roster.
+    target: {{intake_target}}
+    inputs:
+      - name: venue
+        path: venue/venue.json
+    personality: |
+      You are harvesting a factual roster. Record people the venue actually
+      lists. Never invent a committee member, an affiliation, or a research
+      interest — reviewer matching downstream will treat every entry as real,
+      and a fabricated member produces confident nonsense.
+    instructions: |
+      Harvest the program committee for Task {task_id}: {task_title}.
+
+      {% if harvest_pc %}
+      Read `{input.venue.path}` for the venue's identity and site, then find its
+      committee page — usually linked as "Program Committee", "Committee", or
+      "Organization".
+
+      Write `{output.committee.path}` conforming to
+      `schemas/program-committee.schema.json`:
+
+      - One entry per listed person, including chairs, area chairs, the main
+        PC, and any extended review committee. `role` distinguishes them.
+      - `id` is a stable kebab-case slug derived from the name (`jane-doe`).
+        Every downstream artifact references members by this id, so it must be
+        unique within the file and must not change between runs.
+      - `topics[]` should reflect what that person actually works on. Take it
+        from the committee page when it lists topics; otherwise from their
+        homepage or DBLP profile. Leave it out rather than guessing.
+      - Set `complete` to `false` if you could not get the whole roster, and
+        say why in this task's result. Matching downstream is best-effort when
+        the roster is partial, and a silent gap would look like a confident
+        negative.
+
+      `examples/program-committee.json` is a well-formed instance to model.
+      {% else %}
+      PC harvesting is disabled for this instantiation (`harvest_pc=false`).
+
+      Write a minimal `{output.committee.path}` that still conforms to
+      `schemas/program-committee.schema.json`: the venue name, `complete: false`,
+      and a single `external` member entry recording that the roster was not
+      harvested. Downstream reviewer matching should not be run against it.
+      {% endif %}
+
+      Transition to `validate-pc` when the roster is written.
+    outputs:
+      - name: committee
+        path: venue/program-committee.json
+        description: Program committee roster with roles, affiliations, and topics
+
+  validate-pc:
+    description: Check program-committee.json against its schema.
+    program: "python3 scripts/validate_artifact.py --schema-dir schemas --instance venue/program-committee.json --expect-artifact program-committee"
+    program_timeout: 2m
+    visits: {{repair_attempts}}
+    inputs:
+      - name: committee
+        path: venue/program-committee.json
+
+  repair-pc:
+    description: The agent fixes the schema violations the validator reported in program-committee.json.
+    target: {{intake_target}}
+    visits: {{repair_attempts}}
+    inputs:
+      - name: committee
+        path: venue/program-committee.json
+    personality: |
+      You are correcting a structured artifact that failed its schema contract.
+      Fix the artifact, never the schema, and never invent a committee member.
+    instructions: |
+      Repair pass {visit_count} of {visits} for Task {task_id}: {task_title}.
+
+      `{input.committee.path}` failed validation against
+      `schemas/program-committee.schema.json`. The validator wrote every problem
+      with its JSON path into this task's result file.
+
+      The most common failure is a `members[].id` that is not a kebab-case slug
+      — names with capitals, spaces, dots, or accents must be slugified
+      (`Jean-Luc Piçard` becomes `jean-luc-picard`). Ids must stay unique.
+
+      Transition to `validate-pc` when the artifact is corrected.
+
+  pc-failed:
+    description: Human gate — program-committee.json still fails its schema after every repair attempt.
+    gating: true
+    final: true
+    instructions: |
+      The committee roster for Task {task_id} could not be made schema-valid
+      within {{repair_attempts}} repair attempts. Read this task's result file,
+      fix `venue/program-committee.json` by hand, then check it:
+
+        python3 scripts/validate_artifact.py --schema-dir schemas \
+          --instance venue/program-committee.json --expect-artifact program-committee
+
+  completed:
+    description: The artifact is written and conforms to its schema.
+    final: true
+    instructions: |
+      No further action is required.
+
+  cancelled:
+    description: Venue intake was cancelled.
+    final: true
+    instructions: |
+      Stop work and leave existing artifacts unchanged.
+
+transitions:
+  - from: resolve-venue
+    to: validate-venue
+    description: Venue record and verbatim material are written; check the contract.
+
+  - from: validate-venue
+    to: completed
+    description: The venue record conforms to its schema.
+    exit_code: 0
+
+  - from: validate-venue
+    to: repair-venue
+    description: The venue record violates its schema and repair attempts remain.
+    exit_code: nonzero
+    condition: visitCount < visits
+
+  - from: validate-venue
+    to: venue-failed
+    description: The venue record still violates its schema after every repair attempt.
+    exit_code: nonzero
+    condition: visitCount >= visits
+
+  - from: repair-venue
+    to: validate-venue
+    description: The agent corrected the venue record; re-check it.
+
+  - from: harvest-pc
+    to: validate-pc
+    description: Committee roster is written; check the contract.
+
+  - from: validate-pc
+    to: completed
+    description: The roster conforms to its schema.
+    exit_code: 0
+
+  - from: validate-pc
+    to: repair-pc
+    description: The roster violates its schema and repair attempts remain.
+    exit_code: nonzero
+    condition: visitCount < visits
+
+  - from: validate-pc
+    to: pc-failed
+    description: The roster still violates its schema after every repair attempt.
+    exit_code: nonzero
+    condition: visitCount >= visits
+
+  - from: repair-pc
+    to: validate-pc
+    description: The agent corrected the roster; re-check it.
+
+  - from: "*"
+    to: cancelled
+    description: Cancel venue intake from any non-final state.
+
+profiles:
+  workspace:
+    initial: completed
+    allowed:
+      - completed
+
+  venue-task:
+    initial: resolve-venue
+    allowed:
+      - resolve-venue
+      - validate-venue
+      - repair-venue
+      - venue-failed
+      - harvest-pc
+      - validate-pc
+      - repair-pc
+      - pc-failed
+      - completed
+      - cancelled
+
+node_policy:
+  root: workspace
+  default: venue-task
+  by_type:
+    task: venue-task
