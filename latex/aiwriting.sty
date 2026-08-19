@@ -1,0 +1,129 @@
+%% aiwriting.sty -- LaTeX annotations for AI-human collaboration on papers.
+%%
+%% Part of the `technical-writing' library.
+%% See ../AGENTS.md for the semantics each command carries for AI agents,
+%% and ../README.md for installation and usage.
+%%
+%% Package options:
+%%   showreviews  -- render \review and \aireview comments inline (drafting)
+%%   hidereviews  -- suppress them (default; print-ready builds)
+%%   noguidelinefile -- do not write \jobname.aiguidelines
+%%
+%% All annotation commands are invisible in a print-ready build except
+%% \review and \aireview, which are shown only under `showreviews'.
+
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{aiwriting}[2026/08/19 v1.0 AI-human collaboration annotations]
+
+\RequirePackage{xparse}  % For advanced command definitions
+\RequirePackage{xcolor}
+
+% ---------------------------------------------------------------------------
+% Package options
+% ---------------------------------------------------------------------------
+
+% Review annotation visibility toggle.
+% Default is hidden for print-ready builds; `showreviews' turns them on.
+\newif\ifshowreviews
+\showreviewsfalse
+
+\newif\ifaiwriting@guidelinefile
+\aiwriting@guidelinefiletrue
+
+\DeclareOption{showreviews}{\showreviewstrue}
+\DeclareOption{hidereviews}{\showreviewsfalse}
+\DeclareOption{noguidelinefile}{\aiwriting@guidelinefilefalse}
+\ProcessOptions\relax
+
+% ---------------------------------------------------------------------------
+% Protected content
+% ---------------------------------------------------------------------------
+
+% \aikeep{text} - Protect text from AI modifications. AI must NEVER modify this content.
+\newcommand{\aikeep}[1]{#1}
+
+% \aianchor{text} - Anchor for the first sentence of a paragraph. AI must preserve this as the opening.
+% Used to mark key topic sentences that establish paragraph structure and should not be relocated or removed.
+\newcommand{\aianchor}[1]{#1}
+
+% ---------------------------------------------------------------------------
+% Reviews (visible only under the `showreviews' option)
+% ---------------------------------------------------------------------------
+
+% \aireview[importance]{text}{comment} - AI review of text with importance rating (1-10)
+% Shows text normally followed by inline comment in angular brackets
+% Color scales from cyan (1) to blue (10)
+\newcommand{\aireviewcolor}[1]{%
+  \ifcase#1\relax cyan%        0 (fallback)
+    \or cyan!90!blue%          1
+    \or cyan!80!blue%          2
+    \or cyan!70!blue%          3
+    \or cyan!60!blue%          4
+    \or cyan!50!blue%          5
+    \or cyan!40!blue%          6
+    \or cyan!30!blue%          7
+    \or cyan!20!blue%          8
+    \or cyan!10!blue%          9
+    \or blue%                  10
+  \fi%
+}
+% Text followed by inline comment in angular brackets with score
+\NewDocumentCommand{\aireview}{O{5} m m}{%
+  #2%
+  \ifshowreviews
+    {\scriptsize\textcolor{\aireviewcolor{#1}}{$\langle$\textbf{importance: #1/10}: #3$\rangle$}}%
+  \fi
+}
+
+% \review[importance]{text}{comment} - Human review of text with importance rating (1-10)
+% Shows text normally followed by inline comment in angular brackets
+% Color scales from yellow (1) to red (10)
+\newcommand{\reviewcolor}[1]{%
+  \ifcase#1\relax yellow%      0 (fallback)
+    \or yellow!90!red%         1
+    \or yellow!80!red%         2
+    \or yellow!70!red%         3
+    \or yellow!60!red%         4
+    \or yellow!50!red%         5
+    \or yellow!40!red%         6
+    \or yellow!30!red%         7
+    \or yellow!20!red%         8
+    \or yellow!10!red%         9
+    \or red%                   10
+  \fi%
+}
+% Text followed by inline comment in angular brackets with score
+\NewDocumentCommand{\review}{O{5} m m}{%
+  #2%
+  \ifshowreviews
+    {\scriptsize\textcolor{\reviewcolor{#1}}{$\langle$\textbf{importance: #1/10}: #3$\rangle$}}%
+  \fi
+}
+
+% ---------------------------------------------------------------------------
+% Directives (always invisible in the PDF)
+% ---------------------------------------------------------------------------
+
+% \ainote{text} - Note for AI to address in future edits (invisible in PDF)
+\newcommand{\ainote}[1]{}
+
+% \airule{text} - Rule that AI must follow (invisible in PDF, never printed)
+\newcommand{\airule}[1]{}
+
+% \aiguideline{text} - Suggestion AI agents should follow.
+% Writes each guideline to an external file for tooling while remaining invisible in the PDF.
+\ifaiwriting@guidelinefile
+  \newwrite\aiguidelinefile
+  \immediate\openout\aiguidelinefile=\jobname.aiguidelines
+  \AtEndDocument{\immediate\closeout\aiguidelinefile}
+  \newcommand{\aiguideline}[1]{%
+    \begingroup
+    \edef\aiguidelinetext{\detokenize{#1}}%
+    \immediate\write\aiguidelinefile{\aiguidelinetext}%
+    \endgroup
+  }
+\else
+  \newcommand{\aiguideline}[1]{}
+\fi
+
+\endinput

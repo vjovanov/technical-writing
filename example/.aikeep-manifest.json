@@ -1,0 +1,51 @@
+{
+  "version": 2,
+  "description": "AI-protected content manifest for \\aikeep{} and \\aianchor{} blocks",
+  "total_blocks": 6,
+  "aikeep_count": 3,
+  "aianchor_count": 3,
+  "blocks": [
+    {
+      "file": "sections/evaluation.tex",
+      "line": 5,
+      "content": "We evaluate the annotation system on a single representative paper.",
+      "hash": "e9e59fc0a1b5729c",
+      "block_type": "aianchor"
+    },
+    {
+      "file": "sections/evaluation.tex",
+      "line": 23,
+      "content": "Protected blocks tracked",
+      "hash": "f64042c8d26deb48",
+      "block_type": "aikeep"
+    },
+    {
+      "file": "sections/evaluation.tex",
+      "line": 23,
+      "content": "6",
+      "hash": "e7f6c011776e8db7",
+      "block_type": "aikeep"
+    },
+    {
+      "file": "sections/evaluation.tex",
+      "line": 34,
+      "content": "Explicit annotations let AI agents edit a paper without eroding its\ncarefully chosen wording.",
+      "hash": "a3f26f1e78a416bd",
+      "block_type": "aianchor"
+    },
+    {
+      "file": "sections/introduction.tex",
+      "line": 6,
+      "content": "Collaborating with AI agents on a paper requires a way to mark which\ntext is negotiable and which is not.",
+      "hash": "6bc3f2be78438c89",
+      "block_type": "aianchor"
+    },
+    {
+      "file": "sections/introduction.tex",
+      "line": 12,
+      "content": "A \\emph{protected block} is a span of text that an AI agent must never\nmodify, under any instruction.",
+      "hash": "e25c0b34a7b23d6b",
+      "block_type": "aikeep"
+    }
+  ]
+}

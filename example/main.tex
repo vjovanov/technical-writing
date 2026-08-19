@@ -1,0 +1,28 @@
+% Minimal example exercising every command in aiwriting.sty.
+%
+% Build:  make            (comments hidden -- print-ready)
+%         make draft      (comments visible -- drafting)
+%         make verify     (check protected content is unchanged)
+%
+% Uses `article' rather than `acmart' so it compiles anywhere.
+\documentclass[11pt]{article}
+
+\usepackage{microtype}
+
+% Load the annotation library from the repository root.
+% In a real paper, either copy aiwriting.sty next to main.tex, add the
+% directory to TEXINPUTS, or install it into your local texmf tree.
+\usepackage{aiwriting}          % print-ready: review comments hidden
+% \usepackage[showreviews]{aiwriting}  % drafting: review comments visible
+
+\title{Annotating a Paper for AI--Human Collaboration}
+\author{An Author}
+\date{}
+
+\begin{document}
+\maketitle
+
+\input{sections/introduction}
+\input{sections/evaluation}
+
+\end{document}

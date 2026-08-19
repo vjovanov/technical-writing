@@ -1,0 +1,60 @@
+# Core LaTeX auxiliary files
+*.aux
+*.log
+*.out
+*.toc
+*.lof
+*.lot
+*.fls
+*.fdb_latexmk
+*.synctex.gz
+*.synctex(busy)
+*.nav
+*.snm
+*.vrb
+
+# Bibliography
+*.bbl
+*.blg
+*.run.xml
+*.bcf
+
+# Index / glossaries
+*.idx
+*.ilg
+*.ind
+*.glg
+*.glo
+*.gls
+*.acn
+*.acr
+*.alg
+
+# LaTeXmk
+latexmkrc
+*.xdv
+
+# aiwriting
+*.aiguidelines
+
+# Temporary / backup files
+*~
+*.swp
+*.swo
+*.bak
+
+# Build directory (generated images)
+build/
+
+# Generated PDFs
+*.pdf
+
+# Python
+__pycache__/
+*.pyc
+
+# Agent / editor config
+.claude/
+
+# Working notes
+scratchpad/

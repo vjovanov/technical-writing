@@ -1,0 +1,24 @@
+\section{Introduction}
+
+\airule{Every claim in this section must be restated and supported later in the paper.}
+\aiguideline{Keep the contributions list to exactly three items.}
+
+\aianchor{Collaborating with AI agents on a paper requires a way to mark which
+text is negotiable and which is not.}
+Without such markers, an agent asked to ``tighten the prose'' will happily
+rewrite a definition that took three reviewer cycles to settle. The annotations
+in this example make that distinction explicit and machine-checkable.
+
+\aikeep{A \emph{protected block} is a span of text that an AI agent must never
+modify, under any instruction.}
+Surrounding prose remains editable, so an agent can still improve the paragraph
+that introduces the definition.
+
+\ainote{Add a forward reference to the evaluation once its numbers are final.}
+
+This paper makes three contributions:
+\begin{itemize}
+  \item A set of LaTeX annotations for marking protected and anchored text.
+  \item A verification tool that detects modifications to protected content.
+  \item A set of reviewer personas for adversarial self-review.
+\end{itemize}

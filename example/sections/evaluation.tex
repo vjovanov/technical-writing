@@ -1,0 +1,36 @@
+\section{Evaluation}
+
+\airule{Performance numbers must reference Table~\ref{tab:results}.}
+
+\aianchor{We evaluate the annotation system on a single representative paper.}
+The system adds no measurable compilation overhead, since every annotation
+expands either to its argument or to nothing.
+
+\aiguideline{Report percentages with two decimal places.}
+
+\review[8]{The overhead measurement needs a proper baseline.}{Compare against a
+build with the package removed entirely, not just with annotations unused.}
+
+\aireview[4]{Results are summarized in Table~\ref{tab:results}.}{Consider moving
+this sentence before the discussion of overhead.}
+
+\begin{table}[h]
+  \centering
+  \begin{tabular}{lr}
+    \hline
+    Metric & Value \\
+    \hline
+    \aikeep{Protected blocks tracked} & \aikeep{6} \\
+    Compilation overhead & 0.00\% \\
+    \hline
+  \end{tabular}
+  \caption{Annotation system measurements.}
+  \label{tab:results}
+\end{table}
+
+\section{Conclusion}
+% Neither the \airule nor the \aiguideline from the Evaluation section applies here.
+
+\aianchor{Explicit annotations let AI agents edit a paper without eroding its
+carefully chosen wording.}
+The verification step turns that intent into a check that fails loudly.
