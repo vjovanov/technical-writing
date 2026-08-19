@@ -71,17 +71,17 @@ rhei init --here --title "Review 42"
 # Settings live at the project root. A member rhei's own settings.json is
 # ignored — rhei warns about this, and it is the one thing to get right.
 mkdir -p .agents/rhei
-rhei instantiate paper-ingest ../submission-42.pdf --set paper_id=submission-42 \
+rhei instantiate paper-ingest ../submission-42.pdf --set paper_id=42 \
   --output paper-ingest/
 cp paper-ingest/.agents/rhei/settings.json .agents/rhei/settings.json
 
 rhei instantiate venue-intake https://2026.splashcon.org/track/OOPSLA --output venue-intake/
 
-rhei instantiate related-work   --set paper_id=submission-42 --keep-on-error \
+rhei instantiate related-work   --set paper_id=42 --keep-on-error \
   --set prior='Task paper-ingest.ingest' --output related-work/
-rhei instantiate overall-review --set paper_id=submission-42 --keep-on-error \
+rhei instantiate overall-review --set paper_id=42 --keep-on-error \
   --set prior='Task paper-ingest.ingest, Task venue-intake.venue' --output overall-review/
-rhei instantiate section-review --set paper_id=submission-42 --keep-on-error \
+rhei instantiate section-review --set paper_id=42 --keep-on-error \
   --set prior='Task paper-ingest.ingest, Task venue-intake.venue' --output section-review/
 
 rhei validate                      # the whole project, all five rheis
@@ -99,7 +99,7 @@ run time by its coordinator, so it does not exist yet when the project is first
 built, and a `prior` naming it cannot resolve. Add it once the reviews are done:
 
 ```bash
-rhei instantiate pc-member-review --set paper_id=submission-42 --keep-on-error \
+rhei instantiate pc-member-review --set paper_id=42 --keep-on-error \
   --set prior='Task overall-review.merge, Task section-review.merge' \
   --output pc-member-review/
 rhei validate && rhei run
@@ -153,7 +153,7 @@ review. This is what the old `paper-review` template did.
 mkdir review-42 && cd review-42
 
 # Read the paper once, and resolve the venue. Independent — run them together.
-rhei instantiate paper-ingest ../submission-42.pdf --set paper_id=submission-42 \
+rhei instantiate paper-ingest ../submission-42.pdf --set paper_id=42 \
   --output paper-ingest/
 rhei instantiate venue-intake https://2026.splashcon.org/track/OOPSLA \
   --output venue-intake/
@@ -162,17 +162,17 @@ rhei run venue-intake/ &
 wait
 
 # What the paper must be judged against.
-rhei instantiate related-work --set paper_id=submission-42 --output related-work/
+rhei instantiate related-work --set paper_id=42 --output related-work/
 rhei run related-work/
 
 # Two independent reads of the paper: whole-paper, and section by section.
-rhei instantiate overall-review --set paper_id=submission-42 --output overall-review/
-rhei instantiate section-review --set paper_id=submission-42 --output section-review/
+rhei instantiate overall-review --set paper_id=42 --output overall-review/
+rhei instantiate section-review --set paper_id=42 --output section-review/
 rhei run overall-review/ --parallel 4
 rhei run section-review/ --parallel 6
 
 # Consolidate, verify, and render the venue's form. Stops at two human gates.
-rhei instantiate pc-member-review --set paper_id=submission-42 --output pc-member-review/
+rhei instantiate pc-member-review --set paper_id=42 --output pc-member-review/
 rhei run pc-member-review/
 ```
 
@@ -356,7 +356,7 @@ rhei instantiate overall-review --values better-personalities.yaml --output over
 rhei run overall-review/ --parallel 4
 
 rm -rf pc-member-review/          # re-consolidate against the new reviews
-rhei instantiate pc-member-review --set paper_id=submission-42 --output pc-member-review/
+rhei instantiate pc-member-review --set paper_id=42 --output pc-member-review/
 rhei run pc-member-review/
 ```
 

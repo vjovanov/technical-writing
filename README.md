@@ -86,6 +86,179 @@ Splitting the old monolith means you can redo one step alone: a re-run of
 `overall-review` with better personalities does not re-read the paper, re-fetch
 the venue, or re-sweep the literature.
 
+#### Running each template
+
+Every command below is verified. They assume you installed the templates once:
+
+```bash
+# from a checkout of this repository
+mkdir -p ~/.agents/rhei/templates
+for t in "$PWD"/.agents/rhei/templates/*/; do ln -sfn "$t" ~/.agents/rhei/templates/; done
+```
+
+Without that, replace the bare template name with its path
+(`rhei instantiate /path/to/technical-writing/.agents/rhei/templates/paper-ingest …`).
+
+Work in one directory per paper, with each workspace named after the template that
+made it — that is what lets every downstream template find its inputs with no
+path arguments:
+
+```bash
+mkdir review-42 && cd review-42
+```
+
+**1. `paper-ingest`** — read the paper once. Everything else depends on this.
+
+```bash
+# PDF (pages are rendered and read as images)
+rhei instantiate paper-ingest ../submission-42.pdf \
+  --set paper_id=42 --output paper-ingest/
+
+# LaTeX (sources flattened and read directly)
+rhei instantiate paper-ingest ../paper/main.tex --set source_kind=latex \
+  --set paper_id=42 --output paper-ingest/
+
+rhei run paper-ingest/
+```
+
+Produces `paper-ingest/paper/paper.json` and `paper/full-text.md`. Check the
+`core`/`boilerplate` marks before running `section-review` — they set its cost.
+
+**2. `venue-intake`** — resolve the venue and harvest the committee.
+
+```bash
+rhei instantiate venue-intake https://2026.splashcon.org/track/OOPSLA --output venue-intake/
+
+# with a review form you already have, kept byte-for-byte
+rhei instantiate venue-intake https://2026.splashcon.org/track/OOPSLA \
+  --set-file review_form=../hotcrp-form.txt --output venue-intake/
+
+# skip the committee (nothing downstream needs matching)
+rhei instantiate venue-intake "OOPSLA 2026" --set harvest_pc=false --output venue-intake/
+
+rhei run venue-intake/
+```
+
+Produces `venue-intake/venue/venue.json` and `venue/program-committee.json`.
+
+**3. `reviewer-match`** — who is likely to review it. *Author-side.*
+
+```bash
+cat > authors.yaml <<'YAML'
+author_names:
+  - Jane Doe
+  - Richard Roe
+YAML
+
+rhei instantiate reviewer-match --set paper_id=42 \
+  --values authors.yaml --output reviewer-match/
+rhei run reviewer-match/
+```
+
+`author_names` enables conflict detection; without it the template records the
+limitation in `method` rather than silently reporting no conflicts.
+
+**4. `pc-citation-scan`** — whose work you should be citing. *Author-side.*
+
+```bash
+rhei instantiate pc-citation-scan --set paper_id=42 \
+  --set bibliography=../../paper/references.bib --output pc-citation-scan/
+rhei run pc-citation-scan/
+
+# cheaper: only the most likely reviewers
+cat > bands.yaml <<'YAML'
+bands: ["high"]
+YAML
+rhei instantiate pc-citation-scan --set paper_id=42 \
+  --values bands.yaml --output pc-citation-scan/
+```
+
+`bands` and `personalities` are arrays, so they must come through `--values`;
+`--set` only takes scalars.
+
+Read the result filtered to `citation_priority: "must"` and
+`already_cited: false`.
+
+**5. `related-work`** — what the paper must be judged against.
+
+```bash
+rhei instantiate related-work --set paper_id=42 --output related-work/
+
+# wider sweep, no PDF downloads
+rhei instantiate related-work --set paper_id=42 \
+  --set max_papers=30 --set download_pdfs=false --output related-work/
+
+rhei run related-work/
+```
+
+Read it filtered to `relation` in `closest-prior`/`competing` with
+`cited_by_paper: false` — that is the missing-comparison list.
+
+**6. `overall-review`** — whole-paper review, one per personality, in parallel.
+
+```bash
+cat > personalities.yaml <<'YAML'
+personalities:
+  - id: academic
+    label: Academic reviewer
+    selector: claude-code[yolo]:anthropic:claude-opus-5
+    stance: >-
+      You are a professor reviewing for a top-tier venue. Prioritize novelty,
+      technical soundness, and empirical rigor.
+  - id: skeptic
+    label: Industry-skeptical reviewer
+    selector: codex[high]:openai:gpt-5.6-sol
+    stance: >-
+      Default toward rejection unless the evidence is strong. Attack
+      claim-to-evidence alignment sentence by sentence.
+YAML
+
+rhei instantiate overall-review --set paper_id=42 \
+  --values personalities.yaml --output overall-review/
+rhei run overall-review/ --parallel 4
+```
+
+`--parallel` is what makes the personalities run concurrently; without it they
+serialize.
+
+**7. `section-review`** — one task per core section per personality.
+
+```bash
+rhei instantiate section-review --set paper_id=42 \
+  --values personalities.yaml --output section-review/
+rhei run section-review/ --parallel 6
+```
+
+Task count is (core sections × personalities). To narrow it, mark sections
+`boilerplate` in `paper-ingest/paper/paper.json` first, then re-check that file:
+
+```bash
+cd paper-ingest && python3 scripts/validate_artifact.py \
+  --schema-dir schemas --instance paper/paper.json --expect-artifact paper && cd ..
+```
+
+**8. `pc-member-review`** — consolidate, verify, and render the review.
+
+```bash
+rhei instantiate pc-member-review --set paper_id=42 --output pc-member-review/
+rhei run pc-member-review/
+```
+
+`related-work` and `pc-citations` are picked up automatically if those workspaces
+exist. Stops at two human gates — point curation, then final sign-off. Submit
+`pc-member-review/review/submission-42.txt`.
+
+#### Useful while running
+
+```bash
+rhei instantiate <template> --list-inputs     # every input, type, and default
+rhei validate <workspace>                     # check a workspace
+rhei run <workspace> --dry-run                # what would run, spawning nothing
+rhei list                                     # every ticket (project-wide under Panta)
+rhei next <workspace>                         # advance one ticket by hand
+rhei reset <workspace>                        # back to the initial state
+```
+
 ```bash
 .agents/rhei/shared/scripts/test_contracts.sh   # schemas, validator, corruption, cross-wiring
 .agents/rhei/shared/scripts/test_templates.sh   # every template + input branches + fan-out
