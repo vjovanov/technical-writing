@@ -5,6 +5,9 @@ Read one submission once — PDF or LaTeX — and emit the `paper.json` every ot
 Part of the [paper pipeline](../../shared/README.md) — eight composable templates
 that hand structured, schema-validated artifacts to each other.
 
+**Used in:** Every flow — it is the foundation the other seven read. See [the five flows](../../shared/README.md#which-flow-do-i-run) for
+copy-pasteable commands.
+
 This is the foundation of the pipeline. Nothing else re-reads the paper.
 
 **The PDF-vs-LaTeX choice lives here**, and only here. On the PDF path every page

@@ -5,6 +5,9 @@ Chapter-by-chapter review — one task per core section per personality, spawned
 Part of the [paper pipeline](../../shared/README.md) — eight composable templates
 that hand structured, schema-validated artifacts to each other.
 
+**Used in:** Reviewer, mock review, section deep dive. See [the five flows](../../shared/README.md#which-flow-do-i-run) for
+copy-pasteable commands.
+
 How many sections a paper has is not known until it has been read, so the review
 tasks are **spawned at run time**: the coordinator reads the section map in
 `paper.json` and appends one task file per `core` section per personality, plus
@@ -28,7 +31,7 @@ without a concrete improvement path is a complaint the authors cannot act on.
 |---|---|---|---|
 | `paper` | string | `../paper-ingest/paper/paper.json` | paper.json produced by paper-ingest; its sections[] marked `core` decide what gets reviewed |
 | `venue` | string | `../venue-intake/venue/venue.json` | venue.json produced by venue-intake |
-| `related_work` | string | _empty_ | related-work.json produced by related-work; optional |
+| `related_work` | string | `../related-work/related/related-work.json` | related-work.json produced by related-work. Optional — if you ran that template into a sibling directory it is picked up automatically, and if you did not, the review still runs without it. |
 | `paper_id` | string | `submission` | Stable identifier, matching the one in paper.json |
 | `personalities` | array | `` | Reviewer personalities. Every core section is reviewed once per personality, so the task count is (core sections x personalities). |
 | `coordinator_target` | string | `claude-code[yolo]:anthropic:claude-opus-5` | Agent target that reads the section map and spawns the per-section review tasks |

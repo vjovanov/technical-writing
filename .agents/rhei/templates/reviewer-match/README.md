@@ -5,6 +5,9 @@ Estimate which committee members are likely to review the paper, with evidence.
 Part of the [paper pipeline](../../shared/README.md) — eight composable templates
 that hand structured, schema-validated artifacts to each other.
 
+**Used in:** Pre-submission recon only. A reviewer already knows they were assigned the paper. See [the five flows](../../shared/README.md#which-flow-do-i-run) for
+copy-pasteable commands.
+
 Answers "who will probably read this?" — with grounds, not vibes.
 
 Every match carries a `likelihood` in [0,1], a `band`, a written `rationale`, and

@@ -5,6 +5,9 @@ Find each likely reviewer's own work the paper should engage with, and whether i
 Part of the [paper pipeline](../../shared/README.md) — eight composable templates
 that hand structured, schema-validated artifacts to each other.
 
+**Used in:** Pre-submission recon only. Author-side: what to cite before the deadline. See [the five flows](../../shared/README.md#which-flow-do-i-run) for
+copy-pasteable commands.
+
 Reconnaissance, not flattery.
 
 For each member in the bands you select, this finds their publications that

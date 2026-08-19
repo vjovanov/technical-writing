@@ -5,6 +5,9 @@ The composed final step — verified review points and the submission-ready revi
 Part of the [paper pipeline](../../shared/README.md) — eight composable templates
 that hand structured, schema-validated artifacts to each other.
 
+**Used in:** Reviewer, and optionally mock review to get one verified point list instead of several overlapping ones. See [the five flows](../../shared/README.md#which-flow-do-i-run) for
+copy-pasteable commands.
+
 For when you are the one submitting the review. This is what the old monolithic
 `paper-review` template did, now assembled from artifacts the other templates
 produce.
@@ -30,8 +33,8 @@ should not be making it silently.
 | `venue` | string | `../venue-intake/venue/venue.json` | venue.json produced by venue-intake; its review_form drives the final output |
 | `overall_reviews` | string | `../overall-review/reviews/overall-reviews.json` | overall-reviews.json produced by overall-review |
 | `section_reviews` | string | `../section-review/reviews/section-reviews.json` | section-reviews.json produced by section-review |
-| `related_work` | string | _empty_ | related-work.json produced by related-work; optional |
-| `pc_citations` | string | _empty_ | pc-citations.json produced by pc-citation-scan; optional, and normally only useful to an author rather than a reviewer |
+| `related_work` | string | `../related-work/related/related-work.json` | related-work.json produced by related-work. Optional — picked up automatically from a sibling directory when present, skipped when absent. |
+| `pc_citations` | string | `../pc-citation-scan/citations/pc-citations.json` | pc-citations.json produced by pc-citation-scan. Optional, and normally only useful to an author rather than a reviewer — picked up automatically from a sibling directory when present, skipped when absent. |
 | `paper_id` | string | `submission` | Stable identifier, matching the one in paper.json |
 | `aggregator_target` | string | `claude-code[yolo]:anthropic:claude-opus-5` | Agent target that merges reviews into addressable points and renders the report |
 | `verifier_target` | string | `codex[high]:openai:gpt-5.6-sol` | Agent target that independently checks every point against the paper. Use a different model from the aggregator — a model checking its own output is not an independent check. |

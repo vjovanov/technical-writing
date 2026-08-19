@@ -5,6 +5,9 @@ Review the whole paper from several configurable personalities, in parallel.
 Part of the [paper pipeline](../../shared/README.md) — eight composable templates
 that hand structured, schema-validated artifacts to each other.
 
+**Used in:** Reviewer and mock review. See [the five flows](../../shared/README.md#which-flow-do-i-run) for
+copy-pasteable commands.
+
 A personality is a **stance**, not just a model. Each one gets its own prompt and
 its own target, and one state is generated per personality — so the disagreement
 between them is real rather than sampling noise. Two reviewers who would accept
@@ -26,7 +29,7 @@ originals to see how many independent reviewers raised the same point.
 |---|---|---|---|
 | `paper` | string | `../paper-ingest/paper/paper.json` | paper.json produced by paper-ingest |
 | `venue` | string | `../venue-intake/venue/venue.json` | venue.json produced by venue-intake |
-| `related_work` | string | _empty_ | related-work.json produced by related-work; optional — reviews are weaker without it but still run |
+| `related_work` | string | `../related-work/related/related-work.json` | related-work.json produced by related-work. Optional — if you ran that template into a sibling directory it is picked up automatically, and if you did not, the review still runs without it. |
 | `paper_id` | string | `submission` | Stable identifier, matching the one in paper.json |
 | `personalities` | array | `` | Reviewer personalities. Each reviews the whole paper independently, with its own stance, from its own target. |
 | `merge_target` | string | `claude-code[yolo]:anthropic:claude-opus-5` | Agent target that merges the per-personality reviews into one artifact |

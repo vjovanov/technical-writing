@@ -14,9 +14,12 @@ inputs:
     default: ../venue-intake/venue/venue.json
 
   - name: related_work
-    description: related-work.json produced by related-work; optional — reviews are weaker without it but still run
+    description: >-
+      related-work.json produced by related-work. Optional — if you ran that template
+      into a sibling directory it is picked up automatically, and if you did not, the
+      review still runs without it.
     type: string
-    default: ""
+    default: ../related-work/related/related-work.json
 
   - name: paper_id
     description: Stable identifier, matching the one in paper.json

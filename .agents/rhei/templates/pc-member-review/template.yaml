@@ -24,14 +24,19 @@ inputs:
     default: ../section-review/reviews/section-reviews.json
 
   - name: related_work
-    description: related-work.json produced by related-work; optional
+    description: >-
+      related-work.json produced by related-work. Optional — picked up automatically
+      from a sibling directory when present, skipped when absent.
     type: string
-    default: ""
+    default: ../related-work/related/related-work.json
 
   - name: pc_citations
-    description: pc-citations.json produced by pc-citation-scan; optional, and normally only useful to an author rather than a reviewer
+    description: >-
+      pc-citations.json produced by pc-citation-scan. Optional, and normally only useful
+      to an author rather than a reviewer — picked up automatically from a sibling
+      directory when present, skipped when absent.
     type: string
-    default: ""
+    default: ../pc-citation-scan/citations/pc-citations.json
 
   - name: paper_id
     description: Stable identifier, matching the one in paper.json

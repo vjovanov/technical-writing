@@ -138,6 +138,46 @@ else
 fi
 
 echo
+echo "== the documented convention: sibling workspaces named after templates wire themselves =="
+FLOW="$WORK/flow"
+mkdir -p "$FLOW" && cd "$FLOW"
+wired=1
+rhei instantiate "$ROOT/.agents/rhei/templates/paper-ingest" ../x.pdf \
+  --set paper_id=submission-42 --output paper-ingest/ >/dev/null 2>&1 || wired=0
+rhei instantiate "$ROOT/.agents/rhei/templates/venue-intake" \
+  --set conference=https://example.org/v --output venue-intake/ >/dev/null 2>&1 || wired=0
+for t in related-work overall-review section-review pc-member-review; do
+  rhei instantiate "$ROOT/.agents/rhei/templates/$t" --set paper_id=submission-42 \
+    --output "$t/" >/dev/null 2>&1 || wired=0
+done
+if [ "$wired" -eq 1 ]; then
+  ok "every downstream template instantiates with no --set for artifact paths"
+else
+  bad "sibling-workspace convention"
+fi
+
+# Populate the upstream workspaces and run pc-member-review's real import command.
+mkdir -p paper-ingest/paper venue-intake/venue overall-review/reviews \
+         section-review/reviews related-work/related
+cp "$SHARED/examples/paper.json"            paper-ingest/paper/paper.json
+cp "$SHARED/examples/venue.json"            venue-intake/venue/venue.json
+cp "$SHARED/examples/overall-reviews.json"  overall-review/reviews/overall-reviews.json
+cp "$SHARED/examples/section-reviews.json"  section-review/reviews/section-reviews.json
+cp "$SHARED/examples/related-work.json"     related-work/related/related-work.json
+cd pc-member-review
+import_cmd=$(python3 -c "
+import re
+t = open('states.yaml').read()
+m = re.search(r'program: >-\n(.*?)\n    program_timeout', t, re.S)
+print(' '.join(l.strip() for l in m.group(1).split(chr(10))))")
+if eval "$import_cmd" >/dev/null 2>&1 && [ -f inputs/paper.json ] && [ -f inputs/related-work.json ]; then
+  ok "pc-member-review imports all five upstream artifacts, tolerating the absent optional one"
+else
+  bad "cross-workspace composition"
+fi
+cd "$ROOT"
+
+echo
 echo "-------------------------------------------"
 printf '%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

@@ -41,8 +41,24 @@ rules agents are expected to follow.
 Eight composable [rhei](https://github.com/vjovanov/rhei) templates for reviewing
 a conference paper, handing each other **schema-validated JSON artifacts**. They
 live in `.agents/rhei/templates/`, so `rhei templates` and
-`rhei instantiate <name>` find them automatically from anywhere in this
-repository — no copying.
+`rhei instantiate <name>` find them by bare name from anywhere in this repository.
+To use them on papers elsewhere, symlink them into `~/.agents/rhei/templates/`
+once — see [Running them on a paper somewhere
+else](.agents/rhei/shared/README.md#running-them-on-a-paper-somewhere-else).
+
+**Pick a flow by what you want to find out:**
+
+| I want to… | Run | Cost |
+|---|---|---|
+| **Write a review** of someone's paper | `paper-ingest` → `venue-intake` → `related-work` → `overall-review` + `section-review` → `pc-member-review` | 6 templates, 2 human gates |
+| **Know who'll review mine, and what to cite** | `paper-ingest` → `venue-intake` → `reviewer-match` → `pc-citation-scan` | 4 templates, no reviews — cheapest useful flow |
+| **Find my paper's weaknesses** before reviewers do | same as the review flow, on your own paper, with adversarial personalities | 5 templates |
+| **Check my related work is complete** | `paper-ingest` → `related-work` | 2 templates |
+| **Dig into one weak section** | mark the rest `boilerplate`, then `section-review` | 3 templates |
+
+Name each workspace after the template that made it and the pipeline wires itself
+— every upstream input defaults to `../<template-name>/<its output>`, so you never
+pass a path.
 
 | Template | Answers |
 |---|---|
@@ -61,16 +77,16 @@ wrong or stale file fails immediately with a clear message instead of producing
 confident nonsense three steps later. Validation runs in **program states**, not
 agent states — whether a file conforms to a schema is a decided question.
 
-Run one template, a subset, or all eight. The author-side subset
-(`reviewer-match` + `pc-citation-scan`) tells you who will likely read your paper
-and whose work you have not cited, without running any review at all.
+Splitting the old monolith means you can redo one step alone: a re-run of
+`overall-review` with better personalities does not re-read the paper, re-fetch
+the venue, or re-sweep the literature.
 
 ```bash
 .agents/rhei/shared/scripts/test_contracts.sh   # schemas, validator, corruption, cross-wiring
 .agents/rhei/shared/scripts/test_templates.sh   # every template + input branches + fan-out
 ```
 
-See [`.agents/rhei/shared/README.md`](.agents/rhei/shared/README.md) for the
-artifact graph, the schema contract, agent configuration, and a full end-to-end
-invocation.
+**[`.agents/rhei/shared/README.md`](.agents/rhei/shared/README.md) has the five
+flows as copy-pasteable commands**, plus the artifact graph, what runs in
+parallel, the cost levers, and how to configure agents and personalities.
 

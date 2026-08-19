@@ -5,6 +5,9 @@ Resolve a venue reference into `venue.json` and the full program committee.
 Part of the [paper pipeline](../../shared/README.md) — eight composable templates
 that hand structured, schema-validated artifacts to each other.
 
+**Used in:** Reviewer, pre-submission recon, mock review, section deep dive. See [the five flows](../../shared/README.md#which-flow-do-i-run) for
+copy-pasteable commands.
+
 Two artifacts from one reference — a URL, a local file, or a bare venue name.
 
 `venue.json` records what the venue selects for and, critically,

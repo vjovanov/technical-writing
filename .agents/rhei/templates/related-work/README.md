@@ -5,6 +5,9 @@ Deep literature sweep for what the paper must be judged against — independent 
 Part of the [paper pipeline](../../shared/README.md) — eight composable templates
 that hand structured, schema-validated artifacts to each other.
 
+**Used in:** Reviewer, mock review, related-work check. See [the five flows](../../shared/README.md#which-flow-do-i-run) for
+copy-pasteable commands.
+
 Deliberately blind to who is on the PC.
 
 `pc-citation-scan` answers "whose work should I be seen to know?"; this answers
